@@ -13,8 +13,10 @@ class Entity:
 
     SIDES = ("left", "right")
     punch_duration = 0.24
-    kick_duration = 0.28
+    kick_duration = 0.42
     max_charge_time = 0.75
+    overcharge_max_time = 2.5
+    overcharge_health_ratio = 0.35
 
     def __init__(
         self,
@@ -60,6 +62,9 @@ class Entity:
         self.dash_speed = max(480.0, speed * 2.75)
         self.fast_turn_remaining = 0.0
         self.fast_turn_speed = max(570.0, turn_speed * 3.2)
+        self.knockback_velocity = pygame.Vector2()
+        self.defeated_time = 0.0
+        self.ragdoll_spin = 0.0
 
     @staticmethod
     def clamp(value: float, low: float, high: float) -> float:
@@ -98,6 +103,43 @@ class Entity:
     def alive(self) -> bool:
         return self.health > 0
 
+    @property
+    def ready_to_despawn(self) -> bool:
+        """A defeated ragdoll remains until all visible motion has settled."""
+        return (
+            not self.alive
+            and self.defeated_time >= 0.55
+            and self.knockback_velocity.length_squared() <= 12 * 12
+            and abs(self.ragdoll_spin) <= 10
+        )
+
+    @property
+    def can_overcharge(self) -> bool:
+        return self.health / self.max_health <= self.overcharge_health_ratio
+
+    @property
+    def charge_limit(self) -> float:
+        return self.overcharge_max_time if self.can_overcharge else self.max_charge_time
+
+    @property
+    def movement_factor(self) -> float:
+        """Charging increasingly trades mobility for potential knockback."""
+        active_charge = max(
+            (self.charge[side] for side in self.SIDES if self.charging[side]),
+            default=0.0,
+        )
+        normal_ratio = self.clamp(active_charge / self.max_charge_time, 0, 1)
+        overcharge_ratio = self.clamp(
+            (active_charge - self.max_charge_time)
+            / (self.overcharge_max_time - self.max_charge_time),
+            0,
+            1,
+        )
+        charge_factor = 1.0 - 0.45 * normal_ratio - 0.40 * overcharge_ratio
+        if self.knockback_velocity.length_squared() > 300 * 300:
+            charge_factor *= 0.25
+        return charge_factor
+
     def keep_in_arena(self) -> None:
         self.pos.x = self.clamp(
             self.pos.x, self.arena.left + self.radius, self.arena.right - self.radius
@@ -118,8 +160,15 @@ class Entity:
         if movement.length_squared() > 1:
             movement = movement.normalize()
         forward_speed = self.speed if movement.y >= 0 else self.backwards_speed
+        forward_speed *= self.movement_factor
         self.pos += self.forward * movement.y * forward_speed * dt
-        self.pos += self.forward.rotate(90) * movement.x * self.speed * dt
+        self.pos += (
+            self.forward.rotate(90)
+            * movement.x
+            * self.speed
+            * self.movement_factor
+            * dt
+        )
         self.keep_in_arena()
 
     @property
@@ -158,7 +207,7 @@ class Entity:
         maximum = self.turn_speed * dt
         self.angle = (self.angle + self.clamp(difference, -maximum, maximum)) % 360
 
-    def separate_from(self, other: Entity) -> bool:
+    def separate_from(self, other: Entity, apply_impact: bool = True) -> bool:
         """Resolve circular body overlap between this entity and another."""
         offset = other.pos - self.pos
         minimum_distance = self.radius + other.radius
@@ -174,12 +223,36 @@ class Entity:
             distance = math.sqrt(distance_squared)
             offset /= distance
 
+        if apply_impact:
+            self.resolve_impact(other, offset)
+
         correction = offset * ((minimum_distance - distance) / 2 + 0.01)
         self.pos -= correction
         other.pos += correction
         self.keep_in_arena()
         other.keep_in_arena()
         return True
+
+    def resolve_impact(self, other: Entity, normal: pygame.Vector2) -> None:
+        """Transfer a strong collision into damage and secondary knockback."""
+        closing_speed = (self.knockback_velocity - other.knockback_velocity).dot(normal)
+        if closing_speed <= 280:
+            return
+
+        damage = min(28.0, (closing_speed - 280) * 0.032)
+        self_towards = max(0.0, self.knockback_velocity.dot(normal))
+        other_towards = max(0.0, -other.knockback_velocity.dot(normal))
+
+        if self_towards >= other_towards:
+            other.take_damage(damage)
+            self.take_damage(damage * 0.2)
+            other.knockback_velocity += normal * self_towards * 0.62
+            self.knockback_velocity -= normal * self_towards * 0.78
+        else:
+            self.take_damage(damage)
+            other.take_damage(damage * 0.2)
+            self.knockback_velocity -= normal * other_towards * 0.62
+            other.knockback_velocity += normal * other_towards * 0.78
 
     def start_charging(self, side: str) -> None:
         if self.punch_time[side] <= 0 and not self.charging[side]:
@@ -195,18 +268,30 @@ class Entity:
         self.punch_hits[side].clear()
 
     def start_kick(self, side: str) -> None:
-        if self.kick_time["left"] > 0 or self.kick_time["right"] > 0:
+        if (
+            self.kick_time["left"] > 0
+            or self.kick_time["right"] > 0
+            or self.kick_cooldown[side] > 0
+        ):
             return
         self.kick_time[side] = self.kick_duration
-        self.kick_cooldown[side] = 0.48
+        self.kick_cooldown[side] = 0.62
         self.kick_hits[side].clear()
 
     def update_state(self, dt: float) -> None:
         """Advance timers shared by human- and AI-controlled entities."""
+        if not self.alive:
+            self.defeated_time += dt
+            spin_step = math.copysign(
+                min(abs(self.ragdoll_spin), 180 * dt), self.ragdoll_spin
+            )
+            self.angle = (self.angle + self.ragdoll_spin * dt) % 360
+            self.ragdoll_spin -= spin_step
+
         for side in self.SIDES:
             if self.charging[side]:
                 self.charge[side] = min(
-                    self.max_charge_time, self.charge[side] + dt
+                    self.charge_limit, self.charge[side] + dt
                 )
 
             previous_punch_time = self.punch_time[side]
@@ -231,13 +316,46 @@ class Entity:
                 self.forward.rotate(90)
                 * self.dash_direction
                 * self.dash_speed
+                * self.movement_factor
                 * dash_dt
             )
             self.dash_time = max(0.0, self.dash_time - dash_dt)
             self.keep_in_arena()
 
+        self.apply_knockback(dt)
+
         self.dash_cooldown = max(0.0, self.dash_cooldown - dt)
         self.flash = max(0.0, self.flash - dt)
+
+    def apply_knockback(self, dt: float) -> None:
+        """Move from impacts, applying damage when a high-speed fling hits a wall."""
+        speed = self.knockback_velocity.length()
+        if speed <= 0:
+            return
+
+        self.pos += self.knockback_velocity * dt
+        left = self.arena.left + self.radius
+        right = self.arena.right - self.radius
+        top = self.arena.top + self.radius
+        bottom = self.arena.bottom - self.radius
+        wall_impact_speed = 0.0
+
+        if self.pos.x < left or self.pos.x > right:
+            wall_impact_speed = max(wall_impact_speed, abs(self.knockback_velocity.x))
+            self.pos.x = self.clamp(self.pos.x, left, right)
+            self.knockback_velocity.x *= -0.12
+        if self.pos.y < top or self.pos.y > bottom:
+            wall_impact_speed = max(wall_impact_speed, abs(self.knockback_velocity.y))
+            self.pos.y = self.clamp(self.pos.y, top, bottom)
+            self.knockback_velocity.y *= -0.12
+
+        if wall_impact_speed > 360:
+            self.take_damage(min(30.0, (wall_impact_speed - 360) * 0.038))
+
+        remaining_speed = self.knockback_velocity.length()
+        if remaining_speed > 0:
+            new_speed = max(0.0, remaining_speed - 760 * dt)
+            self.knockback_velocity.scale_to_length(new_speed)
 
     def hand_position(self, side_name: str) -> pygame.Vector2:
         right = self.forward.rotate(90)
@@ -262,8 +380,27 @@ class Entity:
         position += side * (self.radius + 1)
         if self.kick_time[side_name] > 0:
             progress = 1 - self.kick_time[side_name] / self.kick_duration
-            position += self.forward * math.sin(progress * math.pi) * (self.radius + 51)
+            sweep_sign = 1 if side_name == "left" else -1
+            sweep_angle = sweep_sign * (-125 + 180 * progress)
+            radial = self.forward.rotate(sweep_angle)
+            reach = self.radius + 8 + math.sin(progress * math.pi) * (
+                self.radius + 25
+            )
+            position = self.pos + radial * reach
         return position
+
+    def foot_orientation(self, side_name: str) -> pygame.Vector2:
+        if self.kick_time[side_name] <= 0:
+            return self.forward
+        offset = self.foot_position(side_name) - self.pos
+        return offset.normalize() if offset.length_squared() else self.forward
+
+    def kick_knockback_direction(self, side_name: str) -> pygame.Vector2:
+        """Blend outward and tangential force in the direction of the sweep."""
+        radial = self.foot_orientation(side_name)
+        sweep_sign = 1 if side_name == "left" else -1
+        tangent = radial.rotate(90 * sweep_sign)
+        return (radial * 0.4 + tangent * 0.75).normalize()
 
     def attack(self, targets: Iterable[Entity]) -> None:
         """Resolve active hand and foot attacks against other entities."""
@@ -271,14 +408,26 @@ class Entity:
         for side in self.SIDES:
             if self.punch_time[side] > 0:
                 hand = self.hand_position(side)
-                power_ratio = self.charge[side] / self.max_charge_time
+                power_ratio = self.clamp(
+                    self.charge[side] / self.max_charge_time, 0, 1
+                )
+                overcharge_ratio = self.clamp(
+                    (self.charge[side] - self.max_charge_time)
+                    / (self.overcharge_max_time - self.max_charge_time),
+                    0,
+                    1,
+                )
                 for target in targets:
                     target_id = id(target)
                     if target_id in self.punch_hits[side]:
                         continue
                     if hand.distance_to(target.pos) <= self.hand_radius + target.radius:
                         damage = (10 + 22 * power_ratio) * self.damage_scale
-                        knockback = (10 + 25 * power_ratio) * self.damage_scale
+                        knockback = (
+                            170
+                            + 270 * power_ratio
+                            + 700 * overcharge_ratio**1.4
+                        ) * self.damage_scale
                         target.take_damage(damage, self.forward * knockback)
                         self.punch_hits[side].add(target_id)
 
@@ -289,22 +438,53 @@ class Entity:
                     if target_id in self.kick_hits[side]:
                         continue
                     if foot.distance_to(target.pos) <= self.radius + 1 + target.radius:
-                        target.take_damage(16 * self.damage_scale, self.forward * 30)
+                        target.take_damage(
+                            13 * self.damage_scale,
+                            self.kick_knockback_direction(side)
+                            * 420
+                            * self.damage_scale,
+                        )
                         self.kick_hits[side].add(target_id)
 
     def take_damage(self, amount: float, knockback: pygame.Vector2 | None = None) -> None:
+        was_alive = self.alive
         self.health = max(0.0, self.health - amount)
         self.flash = 0.11
         if knockback is not None:
-            self.pos += knockback
-            self.keep_in_arena()
+            self.knockback_velocity += knockback
+        if was_alive and not self.alive:
+            self.begin_ragdoll(knockback)
+
+    def begin_ragdoll(self, knockback: pygame.Vector2 | None) -> None:
+        """Cancel combat actions and start a visible defeated tumble."""
+        for side in self.SIDES:
+            self.charging[side] = False
+            self.charge[side] = 0.0
+            self.punch_time[side] = 0.0
+            self.kick_time[side] = 0.0
+        horizontal_direction = 1
+        if knockback is not None and knockback.x < 0:
+            horizontal_direction = -1
+        self.ragdoll_spin = 220.0 * horizontal_direction
+        self.defeated_time = 0.0
 
     def fist_color(self, side: str) -> tuple[int, int, int]:
         ratio = self.clamp(self.charge[side] / self.max_charge_time, 0, 1)
+        overcharge_ratio = self.clamp(
+            (self.charge[side] - self.max_charge_time)
+            / (self.overcharge_max_time - self.max_charge_time),
+            0,
+            1,
+        )
         charged_color = (255, 231, 125)
-        return tuple(
+        normal_color = tuple(
             round(charged * ratio + normal * (1 - ratio))
             for normal, charged in zip(self.limb_color, charged_color)
+        )
+        overcharge_color = (255, 78, 164)
+        return tuple(
+            round(overcharged * overcharge_ratio + normal * (1 - overcharge_ratio))
+            for normal, overcharged in zip(normal_color, overcharge_color)
         )
 
     def draw(
@@ -323,7 +503,7 @@ class Entity:
             self.draw_oriented_oval(
                 surface,
                 self.foot_position(side),
-                self.forward,
+                self.foot_orientation(side),
                 self.radius * 1.8,
                 self.radius * 1.05,
                 self.limb_color,
@@ -331,8 +511,11 @@ class Entity:
             )
 
         pygame.draw.circle(surface, outline, self.pos, self.radius + 3)
+        body_color = self.body_color
+        if not self.alive:
+            body_color = tuple(round(channel * 0.62) for channel in body_color)
         pygame.draw.circle(
-            surface, hit_color if self.flash else self.body_color, self.pos, self.radius
+            surface, hit_color if self.flash else body_color, self.pos, self.radius
         )
 
         eye_base = self.pos + self.forward * self.radius * 0.45
@@ -340,15 +523,34 @@ class Entity:
         eye_radius = max(2, round(self.radius * 0.2))
         for eye_side in (-1, 1):
             eye = eye_base + right * eye_side * eye_offset
-            pygame.draw.circle(surface, (250, 250, 245), eye, eye_radius)
-            pygame.draw.circle(surface, outline, eye + self.forward * 2, max(1, eye_radius // 2))
+            if self.alive:
+                pygame.draw.circle(surface, (250, 250, 245), eye, eye_radius)
+                pygame.draw.circle(
+                    surface, outline, eye + self.forward * 2, max(1, eye_radius // 2)
+                )
+            else:
+                cross = max(2, eye_radius)
+                pygame.draw.line(
+                    surface,
+                    outline,
+                    eye - pygame.Vector2(cross, cross),
+                    eye + pygame.Vector2(cross, cross),
+                    2,
+                )
+                pygame.draw.line(
+                    surface,
+                    outline,
+                    eye + pygame.Vector2(-cross, cross),
+                    eye + pygame.Vector2(cross, -cross),
+                    2,
+                )
 
         for side in self.SIDES:
             hand = self.hand_position(side)
             pygame.draw.circle(surface, outline, hand, self.hand_radius + 2)
             pygame.draw.circle(surface, self.fist_color(side), hand, self.hand_radius)
 
-        if show_status and font is not None:
+        if show_status and font is not None and self.alive:
             bar = pygame.Rect(0, 0, self.radius * 2, 6)
             bar.midbottom = (round(self.pos.x), round(self.pos.y - self.radius - 8))
             pygame.draw.rect(surface, outline, bar, border_radius=3)

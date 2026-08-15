@@ -23,8 +23,18 @@ E: Fast 90 degress turn to right / Strafe dash right when locked in
 
 J: Charge up left punch / weapon (release to swing / use / shoot)
 K: Charge up right punch / weapon (release to swing / use / shoot)
-U: Left kick
-I: Right kick
+U: Left sweeping kick
+I: Right sweeping kick
+
+Charging slows movement. At 35% health or below, desperation overcharge becomes
+available: punches can be charged far beyond the normal limit for much stronger
+knockback. Flung entities damage other entities on a hard collision and take damage
+when they hit an arena wall at high speed. Defeated enemies remain as tumbling
+ragdolls and despawn only after their movement has completely settled.
+
+Kicks plant the entity in place and sweep a foot through a wide arc. They deal less
+damage than a strong punch but cover the sides and knock targets along the sweep,
+making them useful against strafing opponents.
 
 
 ## Run the prototype

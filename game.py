@@ -79,11 +79,18 @@ class Game:
     def resolve_entity_collisions(self) -> None:
         """Keep every living entity's circular body from overlapping another."""
         entities: list[Entity] = [self.player, *self.enemies]
+        processed_impacts: set[tuple[int, int]] = set()
         for _ in range(12):
             corrected_overlap = False
             for index, entity in enumerate(entities):
                 for other in entities[index + 1 :]:
-                    corrected_overlap = entity.separate_from(other) or corrected_overlap
+                    pair = (id(entity), id(other))
+                    collided = entity.separate_from(
+                        other, apply_impact=pair not in processed_impacts
+                    )
+                    if collided:
+                        processed_impacts.add(pair)
+                        corrected_overlap = True
             if not corrected_overlap:
                 break
 
@@ -97,10 +104,13 @@ class Game:
         self.resolve_entity_collisions()
 
         self.player.attack(self.enemies)
-        self.enemies = [enemy for enemy in self.enemies if enemy.alive]
         for enemy in self.enemies:
-            enemy.attack((self.player,))
+            if enemy.alive:
+                enemy.attack((self.player,))
         self.resolve_entity_collisions()
+        self.enemies = [
+            enemy for enemy in self.enemies if not enemy.ready_to_despawn
+        ]
 
         if not self.enemies:
             if self.stage == 0:
@@ -164,15 +174,15 @@ class Game:
         )
         self.draw_bar(
             pygame.Rect(42, HEIGHT - 27, 154, 18),
-            self.player.charge["left"] / self.player.max_charge_time,
-            (102, 171, 224),
-            "J  LEFT PUNCH",
+            self.player.charge["left"] / self.player.charge_limit,
+            (229, 70, 153) if self.player.can_overcharge else (102, 171, 224),
+            "J  OVERCHARGE" if self.player.can_overcharge else "J  LEFT PUNCH",
         )
         self.draw_bar(
             pygame.Rect(204, HEIGHT - 27, 154, 18),
-            self.player.charge["right"] / self.player.max_charge_time,
-            (102, 171, 224),
-            "K  RIGHT PUNCH",
+            self.player.charge["right"] / self.player.charge_limit,
+            (229, 70, 153) if self.player.can_overcharge else (102, 171, 224),
+            "K  OVERCHARGE" if self.player.can_overcharge else "K  RIGHT PUNCH",
         )
         controls = self.small_font.render(
             "W/S move   Shift lock   A/D turn/strafe   Q/E turn/dash   J/K punch   U/I kick",
@@ -180,6 +190,14 @@ class Game:
             INK,
         )
         self.screen.blit(controls, controls.get_rect(bottomright=(WIDTH - 40, HEIGHT - 9)))
+
+        if self.player.can_overcharge and self.state == "playing":
+            warning = self.small_font.render(
+                "DESPERATION: OVERCHARGE UNLOCKED — charging heavily slows movement",
+                True,
+                (178, 34, 104),
+            )
+            self.screen.blit(warning, warning.get_rect(midtop=(WIDTH / 2, 49)))
 
         if self.notice_time > 0 and self.state == "playing":
             message = self.font.render(self.notice, True, INK)

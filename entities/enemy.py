@@ -40,13 +40,25 @@ class Enemy(Entity):
         self.target: Entity | None = None
         self.strafe_direction = -1 if sum(map(ord, name)) % 2 else 1
         self.strafe_timer = 0.9 + (sum(map(ord, name)) % 5) * 0.13
+        self.last_target_pos: pygame.Vector2 | None = None
 
     def update(self, dt: float, target: Entity) -> None:
         """Chase and choose actions; Entity performs all physical mechanics."""
         self.target = target
         self.update_state(dt)
+        if not self.alive:
+            self.target = None
+            return
         self.action_cooldown = max(0.0, self.action_cooldown - dt)
         self.turn_towards(target.pos, dt)
+
+        target_lateral_speed = 0.0
+        if self.last_target_pos is not None and dt > 0:
+            target_motion = target.pos - self.last_target_pos
+            target_lateral_speed = abs(
+                target_motion.dot(self.forward.rotate(90)) / dt
+            )
+        self.last_target_pos = target.pos.copy()
 
         self.strafe_timer -= dt
         if self.strafe_timer <= 0:
@@ -86,9 +98,12 @@ class Enemy(Entity):
             self.action_cooldown = 0.38
             return
 
-        if self.action_count % 3 == 0:
+        target_is_strafing = (
+            target_lateral_speed >= 65 and distance <= attack_distance + 16
+        )
+        if target_is_strafing or self.action_count % 3 == 0:
             self.start_kick(side)
-            self.action_cooldown = 0.62
+            self.action_cooldown = 0.78
         else:
             self.start_charging(side)
             self.charging_side = side
