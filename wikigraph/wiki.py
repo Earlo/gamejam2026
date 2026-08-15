@@ -25,7 +25,18 @@ def _empty_person() -> dict[str, Any]:
         "article_loaded": False,
         "stat_points": {},
         "defeated": False,
+        "defeated_player": 0,
+        "assisted_defeat": 0,
     }
+
+
+def _nonnegative_count(value: object) -> int:
+    """Read a persisted counter without letting malformed saves break loading."""
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        else 0
+    )
 
 
 def load_progress(path: Path = SAVE_PATH) -> dict[str, Any]:
@@ -83,6 +94,14 @@ def load_progress(path: Path = SAVE_PATH) -> dict[str, Any]:
             person["defeated"] = bool(
                 person["defeated"] or node.get("defeated", False) or name in defeated
             )
+            person["defeated_player"] = max(
+                person["defeated_player"],
+                _nonnegative_count(node.get("defeatedPlayer", 0)),
+            )
+            person["assisted_defeat"] = max(
+                person["assisted_defeat"],
+                _nonnegative_count(node.get("assistedDefeat", 0)),
+            )
             for child in children.values():
                 read_node(child)
 
@@ -139,6 +158,12 @@ def load_progress(path: Path = SAVE_PATH) -> dict[str, Any]:
             "article_loaded": False,
             "stat_points": {},
             "defeated": bool(record.get("defeated", False)),
+            "defeated_player": _nonnegative_count(
+                record.get("defeatedPlayer", 0)
+            ),
+            "assisted_defeat": _nonnegative_count(
+                record.get("assistedDefeat", 0)
+            ),
         }
     for child in children:
         graph.setdefault(child, _empty_person())
@@ -180,6 +205,12 @@ def save_to_graph(
             return {
                 "name": name,
                 "defeated": name in defeated_names,
+                "defeatedPlayer": _nonnegative_count(
+                    person.get("defeated_player", 0)
+                ),
+                "assistedDefeat": _nonnegative_count(
+                    person.get("assisted_defeat", 0)
+                ),
                 "connectionsLoaded": bool(person.get("connections_loaded", False)),
                 "articleLength": max(0, int(person.get("article_length", 0))),
                 "articleLoaded": bool(person.get("article_loaded", False)),
@@ -199,6 +230,12 @@ def save_to_graph(
         return {
             "name": name,
             "defeated": name in defeated_names,
+            "defeatedPlayer": _nonnegative_count(
+                person.get("defeated_player", 0)
+            ),
+            "assistedDefeat": _nonnegative_count(
+                person.get("assisted_defeat", 0)
+            ),
             "connectionsLoaded": bool(person.get("connections_loaded", False)),
             "articleLength": max(0, int(person.get("article_length", 0))),
             "articleLoaded": bool(person.get("article_loaded", False)),

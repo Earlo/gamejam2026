@@ -201,6 +201,8 @@ class Game:
                 "article_loaded": False,
                 "stat_points": allocate_enemy_stats(name, 0),
                 "defeated": False,
+                "defeated_player": 0,
+                "assisted_defeat": 0,
             },
         )
         person.setdefault("connections", [])
@@ -209,6 +211,8 @@ class Game:
         person.setdefault("article_loaded", False)
         person.setdefault("stat_points", allocate_enemy_stats(name, 0))
         person.setdefault("defeated", False)
+        person.setdefault("defeated_player", 0)
+        person.setdefault("assisted_defeat", 0)
         saved_points = person["stat_points"]
         if not isinstance(saved_points, dict) or any(
             not isinstance(saved_points.get(stat), int) for stat in STAT_KEYS
@@ -406,6 +410,8 @@ class Game:
             stat_points=stat_points,
             article_length=int(person["article_length"]),
             boss=is_boss,
+            defeated_player=int(person["defeated_player"]),
+            assisted_defeat=int(person["assisted_defeat"]),
         )
         self.maybe_arm_enemy(enemy)
         self.enemies.append(enemy)
@@ -451,6 +457,28 @@ class Game:
 
             if name.casefold() in {"adolf ", "hitler"}:
                 self.state = "won"
+
+    def record_player_defeat(self) -> None:
+        """Persist the final-blow enemy and every living enemy that assisted."""
+        source = self.player.last_damage_source
+        killer = (
+            source
+            if isinstance(source, Enemy) and source in self.enemies
+            else None
+        )
+        participants = [enemy for enemy in self.enemies if enemy.alive]
+        if killer is not None and killer not in participants:
+            participants.append(killer)
+
+        for enemy in participants:
+            person = self.ensure_person(enemy.name)
+            if enemy is killer:
+                person["defeated_player"] = int(person["defeated_player"]) + 1
+                enemy.defeated_player += 1
+            else:
+                person["assisted_defeat"] = int(person["assisted_defeat"]) + 1
+                enemy.assisted_defeat += 1
+        self.save_progress()
 
     def drop_enemy_loot(self, enemy: Enemy) -> None:
         """Drop a carried weapon or occasionally roll a powerup."""
@@ -598,6 +626,7 @@ class Game:
 
         if self.player.health <= 0:
             self.player.health = 0
+            self.record_player_defeat()
             self.state = "lost"
 
         self.notice_time = max(0.0, self.notice_time - dt)
@@ -628,7 +657,16 @@ class Game:
         chart_text = "CHARTED" if person["connections_loaded"] else "SEARCHING"
         chart_color = (55, 125, 76) if person["connections_loaded"] else (174, 105, 42)
         chart_label = self.tiny_font.render(chart_text, True, chart_color)
-        available_width = panel.width - 50 - chart_label.get_width()
+        star_colors = Enemy.defeat_star_colors(
+            int(person["defeated_player"]), int(person["assisted_defeat"])
+        )
+        star_spacing = 13
+        star_width = (len(star_colors) - 1) * star_spacing + 11 if star_colors else 0
+        available_width = (
+            panel.width - 50 - chart_label.get_width() - star_width
+        )
+        if star_colors:
+            available_width -= 7
         display_name = name
         while (
             len(display_name) > 3
@@ -638,7 +676,16 @@ class Game:
         if display_name != name:
             display_name = display_name.rstrip() + "…"
         label = self.small_font.render(prefix + display_name, True, INK)
-        self.screen.blit(label, (panel.left + 16, y))
+        label_position = (panel.left + 16, y)
+        self.screen.blit(label, label_position)
+        star_start_x = label_position[0] + label.get_width() + 7 + 5.5
+        for index, color in enumerate(star_colors):
+            Enemy.draw_star(
+                self.screen,
+                pygame.Vector2(star_start_x + index * star_spacing, y + 7),
+                color,
+                radius=5.5,
+            )
         self.screen.blit(
             chart_label,
             (panel.right - 16 - chart_label.get_width(), y + 2),

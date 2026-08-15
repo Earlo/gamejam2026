@@ -11,6 +11,10 @@ from .stats import STAT_KEYS, enemy_threat_level
 
 
 class Enemy(Entity):
+    FINAL_BLOW_STAR_COLOR = (244, 185, 45)
+    ASSIST_STAR_COLOR = (184, 190, 198)
+    STAR_OUTLINE = (55, 52, 48)
+
     PALETTES = (
         ((202, 82, 75), (224, 119, 103), (255, 190, 92)),
         ((178, 72, 137), (218, 116, 174), (255, 199, 88)),
@@ -39,6 +43,8 @@ class Enemy(Entity):
         stat_points: dict[str, int] | None = None,
         article_length: int = 0,
         boss: bool = False,
+        defeated_player: int = 0,
+        assisted_defeat: int = 0,
     ) -> None:
         self.boss = boss
         self.aggression = aggression
@@ -50,6 +56,8 @@ class Enemy(Entity):
             threat_level = enemy_threat_level(self.stat_points)
         self.threat_level = max(0, min(5, threat_level))
         self.article_length = article_length
+        self.defeated_player = max(0, defeated_player)
+        self.assisted_defeat = max(0, assisted_defeat)
         appearance = hashlib.sha256(name.casefold().encode("utf-8")).digest()
         self.appearance_id = (
             appearance[0] % len(self.PALETTES),
@@ -394,3 +402,57 @@ class Enemy(Entity):
         self.draw_body_marking(surface)
         self.draw_archetype_detail(surface)
         self.draw_mean_face(surface)
+        self.draw_defeat_stars(surface)
+
+    @staticmethod
+    def star_points(
+        center: pygame.Vector2, radius: float = 7
+    ) -> list[pygame.Vector2]:
+        """Return a compact five-point star polygon."""
+        points = []
+        for index in range(10):
+            point_radius = radius if index % 2 == 0 else radius * 0.43
+            points.append(
+                center + pygame.Vector2(0, -point_radius).rotate(index * 36)
+            )
+        return points
+
+    @classmethod
+    def defeat_star_colors(
+        cls, defeated_player: int, assisted_defeat: int
+    ) -> list[tuple[int, int, int]]:
+        return (
+            [cls.FINAL_BLOW_STAR_COLOR] * max(0, defeated_player)
+            + [cls.ASSIST_STAR_COLOR] * max(0, assisted_defeat)
+        )
+
+    @classmethod
+    def draw_star(
+        cls,
+        surface: pygame.Surface,
+        center: pygame.Vector2,
+        color: tuple[int, int, int],
+        *,
+        radius: float = 7,
+    ) -> None:
+        pygame.draw.polygon(surface, cls.STAR_OUTLINE, cls.star_points(center, radius))
+        pygame.draw.polygon(
+            surface, color, cls.star_points(center, radius * 0.74)
+        )
+
+    def draw_defeat_stars(self, surface: pygame.Surface) -> None:
+        """Show one gold final-blow star and one silver assist star per result."""
+        colors = self.defeat_star_colors(
+            self.defeated_player, self.assisted_defeat
+        )
+        if not colors:
+            return
+        spacing = 16
+        start_x = self.pos.x - (len(colors) - 1) * spacing / 2
+        y = self.pos.y - self.radius - 22
+        for index, color in enumerate(colors):
+            self.draw_star(
+                surface,
+                pygame.Vector2(start_x + index * spacing, y),
+                color,
+            )

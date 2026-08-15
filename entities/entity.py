@@ -82,6 +82,7 @@ class Entity:
         self.knockback_velocity = pygame.Vector2()
         self.defeated_time = 0.0
         self.ragdoll_spin = 0.0
+        self.last_damage_source: Entity | None = None
 
     def set_attack_speed(self, multiplier: float) -> None:
         """Scale attack animations and reusable-action cooldowns."""
@@ -346,13 +347,13 @@ class Entity:
         other_towards = max(0.0, -other.knockback_velocity.dot(normal))
 
         if self_towards >= other_towards:
-            other.take_damage(damage)
-            self.take_damage(damage * 0.2)
+            other.take_damage(damage, source=self)
+            self.take_damage(damage * 0.2, source=other)
             other.knockback_velocity += normal * self_towards * 0.62
             self.knockback_velocity -= normal * self_towards * 0.78
         else:
-            self.take_damage(damage)
-            other.take_damage(damage * 0.2)
+            self.take_damage(damage, source=other)
+            other.take_damage(damage * 0.2, source=self)
             self.knockback_velocity -= normal * other_towards * 0.62
             other.knockback_velocity += normal * other_towards * 0.78
 
@@ -421,11 +422,18 @@ class Entity:
         weapon = self.weapons[side]
         if weapon is None:
             return self.forward
+        if weapon.spec.attack_style == "shoot":
+            aim_point = self.pos + self.forward * weapon.spec.attack_range
+            aim_offset = aim_point - self.hand_position(side)
+            return aim_offset.normalize()
         if weapon.spec.attack_style != "swing" or self.punch_time[side] <= 0:
             return self.forward
         progress = 1 - self.punch_time[side] / self.punch_duration
         side_sign = 1 if side == "left" else -1
-        return self.forward.rotate(side_sign * (105 - 210 * progress))
+        half_arc = weapon.spec.swing_arc / 2
+        return self.forward.rotate(
+            side_sign * (half_arc - weapon.spec.swing_arc * progress)
+        )
 
     def weapon_tip(self, side: str, *, attack_range: bool = False) -> pygame.Vector2:
         weapon = self.weapons[side]
@@ -619,7 +627,7 @@ class Entity:
                 * self.damage_scale
                 * weapon.spec.knockback_multiplier
             )
-            hit_target.take_damage(damage, self.forward * knockback)
+            hit_target.take_damage(damage, self.forward * knockback, source=self)
             self.punch_hits[side].add(id(hit_target))
         self.shot_tracer[side] = (muzzle.copy(), tracer_end)
         self.shot_tracer_time[side] = 0.09
@@ -687,7 +695,7 @@ class Entity:
                                 else self.forward
                             )
                             target.take_damage(
-                                damage, attack_direction * knockback
+                                damage, attack_direction * knockback, source=self
                             )
                             self.punch_hits[side].add(target_id)
                             if weapon is not None:
@@ -707,12 +715,21 @@ class Entity:
                             self.kick_knockback_direction(side)
                             * 420
                             * self.damage_scale,
+                            source=self,
                         )
                         self.kick_hits[side].add(target_id)
 
-    def take_damage(self, amount: float, knockback: pygame.Vector2 | None = None) -> None:
+    def take_damage(
+        self,
+        amount: float,
+        knockback: pygame.Vector2 | None = None,
+        *,
+        source: Entity | None = None,
+    ) -> None:
         was_alive = self.alive
         self.health = max(0.0, self.health - amount)
+        if was_alive:
+            self.last_damage_source = source
         self.flash = 0.11
         if knockback is not None:
             self.knockback_velocity += knockback

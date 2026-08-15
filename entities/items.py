@@ -29,6 +29,7 @@ class WeaponSpec:
     damage_multiplier: float
     knockback_multiplier: float
     durability: int
+    swing_arc: float = 0
 
 
 @dataclass
@@ -49,13 +50,23 @@ class Weapon:
 
 WEAPON_SPECS = {
     "club": WeaponSpec(
-        "CLUB", "swing", (139, 91, 55), (205, 151, 85), 29, 29, 7, 1.35, 1.55, 10
+        "CLUB",
+        "swing",
+        (139, 91, 55),
+        (205, 151, 85),
+        36,
+        38,
+        8,
+        1.35,
+        1.55,
+        10,
+        300,
     ),
     "sword": WeaponSpec(
         "SWORD", "stab", (190, 204, 211), (94, 135, 165), 34, 34, 4, 1.65, 1.18, 8
     ),
     "gun": WeaponSpec(
-        "GUN", "shoot", (72, 79, 91), (221, 156, 62), 21, 300, 4, 1.15, 0.62, 12
+        "GUN", "shoot", (72, 79, 91), (221, 156, 62), 21, 300, 5, 1.15, 0.62, 12
     ),
 }
 

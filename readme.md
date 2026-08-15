@@ -14,6 +14,9 @@ until that opponent is defeated.
 
 The save is a forest with top-level `allDefeated`, `allPending`, and `trees`
 fields. Each tree recursively nests people under a keyed `connections` object.
+Each person also stores `defeatedPlayer` and `assistedDefeat` counters. Enemies
+earn a gold star for dealing the player's final blow and a silver star when they
+were still fighting alongside the final-blow enemy.
 The game window includes a right-hand queue showing people who are unlocked but
 not currently fighting.
 
@@ -68,13 +71,15 @@ Kicks plant the entity in place and sweep a foot through a wide arc. They deal l
 damage than a strong punch but cover the sides and knock targets along the sweep,
 making them useful against strafing opponents.
 
-Every defeated enemy drops an item that can be collected by walking over it.
-Clubs, swords, and hammers automatically equip into an empty hand (or replace the
-most worn weapon) and make that hand's J/K attack longer and stronger. Weapons
-lose one durability on each successful hit and break at zero. Health pickups heal
-35 HP, while Fury boosts damage and Haste boosts movement and attack speed for ten
-seconds. The first defeated enemy always drops a weapon; later loot is influenced
-by enemy threat. Uncollected drops blink before disappearing after 22 seconds.
+Some enemies enter the arena carrying a club, sword, or gun and use it against the
+player. If defeated before their equipment breaks, they drop that same weapon with
+its remaining durability. Clubs sweep through a broad arc, swords stab straight
+ahead, and guns fire a limited supply of long-range shots. A collected weapon
+automatically equips into an empty hand (or replaces the most worn weapon).
+Unarmed enemies have only a modest, threat-scaled chance to drop an item: health
+pickups heal 35 HP, while Fury boosts damage and Haste boosts movement and attack
+speed for ten seconds. Uncollected drops blink before disappearing after 22
+seconds.
 
 
 ## Run the prototype
