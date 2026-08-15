@@ -4,7 +4,15 @@ Beating a person unlocks the people linked from their Wikipedia page. Unlocked
 people walk into the arena from its edges over time, with up to four fighting at
 once. A defeated person is saved in `wikigraph/save.json` and is never spawned
 again. The same save also caches discovered connections and the current pool of
-possible enemies.
+possible enemies. If a page has no usable direct connections, the game searches
+two links deep; if that is also empty, it adds a new random person instead.
+Connections are prefetched when an opponent enters the arena, but remain locked
+until that opponent is defeated.
+
+The save is a forest with top-level `allDefeated`, `allPending`, and `trees`
+fields. Each tree recursively nests people under a keyed `connections` object.
+The game window includes a right-hand queue showing people who are unlocked but
+not currently fighting.
 
 The goal is to defeat hitler.
 
