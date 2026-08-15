@@ -63,6 +63,8 @@ class Enemy(Entity):
 
         attack_distance = self.radius + target.radius + 52
         strafe_amount = 0.72 * self.strafe_direction if distance < attack_distance + 45 else 0.0
+        if self.is_strafe_dashing:
+            strafe_amount = 0.0
         self.move_axes(forward_amount, strafe_amount, dt)
 
         if self.charging_side is not None:

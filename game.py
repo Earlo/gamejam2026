@@ -205,7 +205,8 @@ class Game:
         smoke_frames = int(os.environ.get("KILIN_KOLIN_SMOKE_FRAMES", "0"))
         frames = 0
         while running:
-            dt = min(self.clock.tick(FPS) / 1000, 0.05)
+            # Cap long frames so boosted movement cannot skip through small bodies.
+            dt = min(self.clock.tick(FPS) / 1000, 1 / 30)
             for event in pygame.event.get():
                 running = self.handle_event(event) and running
             self.update(dt)

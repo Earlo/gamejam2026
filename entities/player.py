@@ -39,12 +39,12 @@ class Player(Entity):
             if self.target is not None and self.target.alive:
                 self.strafe_dash(-1)
             else:
-                self.snap_turn(-90)
+                self.fast_turn(-90)
         elif key == pygame.K_e:
             if self.target is not None and self.target.alive:
                 self.strafe_dash(1)
             else:
-                self.snap_turn(90)
+                self.fast_turn(90)
         elif key == pygame.K_j:
             self.start_charging("left")
         elif key == pygame.K_k:
@@ -77,9 +77,9 @@ class Player(Entity):
         lateral = float(keys[pygame.K_d]) - float(keys[pygame.K_a])
         if self.target is not None:
             self.turn_towards(self.target.pos, dt)
-            self.move_axes(forward, lateral, dt)
+            self.move_axes(forward, 0.0 if self.is_strafe_dashing else lateral, dt)
         else:
-            self.turn(lateral, dt)
+            self.turn(0.0 if self.is_fast_turning else lateral, dt)
             self.move(forward, dt)
 
         self.target_indicator_angle = (self.target_indicator_angle + 125 * dt) % 360

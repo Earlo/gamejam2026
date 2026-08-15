@@ -112,6 +112,8 @@ class Entity:
 
     def move_axes(self, forward_amount: float, strafe_amount: float, dt: float) -> None:
         """Move forward/backward and sideways without a diagonal speed boost."""
+        if self.kick_time["left"] > 0 or self.kick_time["right"] > 0:
+            return
         movement = pygame.Vector2(strafe_amount, forward_amount)
         if movement.length_squared() > 1:
             movement = movement.normalize()
@@ -193,7 +195,7 @@ class Entity:
         self.punch_hits[side].clear()
 
     def start_kick(self, side: str) -> None:
-        if self.kick_cooldown[side] > 0:
+        if self.kick_time["left"] > 0 or self.kick_time["right"] > 0:
             return
         self.kick_time[side] = self.kick_duration
         self.kick_cooldown[side] = 0.48
@@ -256,7 +258,7 @@ class Entity:
     def foot_position(self, side_name: str) -> pygame.Vector2:
         right = self.forward.rotate(90)
         side = -right if side_name == "left" else right
-        position = self.pos - self.forward * (self.radius + 8)
+        position = self.pos - self.forward * (self.radius - 8)
         position += side * (self.radius + 1)
         if self.kick_time[side_name] > 0:
             progress = 1 - self.kick_time[side_name] / self.kick_duration
