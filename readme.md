@@ -36,4 +36,3 @@ The prototype uses simple drawn shapes: the player is a blue ball, the hands are
 small balls, and the feet are small ovals. Hold J or K to charge the matching hand,
 then release to punch. U and I kick immediately. Press R after winning or losing to
 restart, or Escape to quit.
-r pu

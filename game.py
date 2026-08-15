@@ -22,6 +22,12 @@ PLAYER_LIGHT = (127, 190, 235)
 ENEMY_COLOR = (202, 82, 75)
 HIT_COLOR = (255, 231, 125)
 
+def fist_color(power_ratio: float) -> tuple[int, int, int]:
+    """Return a color for a fist based on its charge power."""
+    red = round(255 * power_ratio + 71 * (1 - power_ratio))
+    green = round(231 * power_ratio + 139 * (1 - power_ratio))
+    blue = round(125 * power_ratio + 204 * (1 - power_ratio))
+    return (red, green, blue)
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
@@ -56,7 +62,7 @@ def draw_oriented_oval(
 class Enemy:
     pos: pygame.Vector2
     name: str
-    radius: int = 22
+    radius: int = 12
     max_health: float = 38
     speed: float = 68
     boss: bool = False
@@ -102,11 +108,11 @@ class Enemy:
 
 
 class Player:
-    radius = 29
-    hand_radius = 10
+    radius = 12
+    hand_radius = 5
     punch_duration = 0.24
     kick_duration = 0.28
-    max_charge_time = 1.25
+    max_charge_time = 0.75
 
     def __init__(self) -> None:
         self.pos = pygame.Vector2(WIDTH / 2, HEIGHT - 150)
@@ -118,7 +124,6 @@ class Player:
         self.charging = {"left": False, "right": False}
         self.charge = {"left": 0.0, "right": 0.0}
         self.punch_time = {"left": 0.0, "right": 0.0}
-        self.punch_power = {"left": 0.0, "right": 0.0}
         self.punch_hits = {"left": set(), "right": set()}
         self.kick_time = {"left": 0.0, "right": 0.0}
         self.kick_cooldown = {"left": 0.0, "right": 0.0}
@@ -149,8 +154,7 @@ class Player:
         if not self.charging[side]:
             return
         self.charging[side] = False
-        self.punch_power[side] = max(0.12, self.charge[side])
-        self.charge[side] = 0.0
+        # self.charge[side] = 0.0
         self.punch_time[side] = self.punch_duration
         self.punch_hits[side].clear()
 
@@ -177,7 +181,10 @@ class Player:
                 self.charge[side] = min(
                     self.max_charge_time, self.charge[side] + dt
                 )
-            self.punch_time[side] = max(0.0, self.punch_time[side] - dt)
+            new_punch_time = max(0.0, self.punch_time[side] - dt)
+            if (new_punch_time <= 0) and (self.punch_time[side] > 0):
+                self.charge[side] = 0.0
+            self.punch_time[side] = new_punch_time
             self.kick_time[side] = max(0.0, self.kick_time[side] - dt)
             self.kick_cooldown[side] = max(0.0, self.kick_cooldown[side] - dt)
 
@@ -188,15 +195,16 @@ class Player:
         forward = facing(self.angle)
         right = forward.rotate(90)
         side = -right if side_name == "left" else right
-        position = self.pos + side * (self.radius + self.hand_radius + 2)
+        position = self.pos + side * (self.radius + self.hand_radius)
 
         if self.charging[side_name]:
-            position -= forward * (5 + 5 * self.charge[side_name] / self.max_charge_time)
+            position -= forward * (5 + 10 * self.charge[side_name] / self.max_charge_time)
         elif self.punch_time[side_name] > 0:
+            punch_target = self.pos + forward * (28 + 40 * self.charge[side_name] / self.max_charge_time) + side * (self.hand_radius)
             progress = 1 - self.punch_time[side_name] / self.punch_duration
             extension = math.sin(progress * math.pi)
-            power = self.punch_power[side_name] / self.max_charge_time
-            position += forward * extension * (28 + 40 * power)
+            power = self.charge[side_name] / self.max_charge_time
+            position += (punch_target - position) * extension
         return position
 
     def foot_position(self, side_name: str) -> pygame.Vector2:
@@ -213,7 +221,7 @@ class Player:
         for side in ("left", "right"):
             if self.punch_time[side] > 0:
                 hand = self.hand_position(side)
-                power_ratio = self.punch_power[side] / self.max_charge_time
+                power_ratio = self.charge[side] / self.max_charge_time
                 for enemy in enemies:
                     enemy_id = id(enemy)
                     if enemy_id in self.punch_hits[side]:
@@ -271,9 +279,8 @@ class Player:
 
         for side in ("left", "right"):
             hand = self.hand_position(side)
-            pygame.draw.line(surface, INK, self.pos, hand, 4)
             pygame.draw.circle(surface, INK, hand, self.hand_radius + 2)
-            pygame.draw.circle(surface, PLAYER_LIGHT, hand, self.hand_radius)
+            pygame.draw.circle(surface, fist_color(self.charge[side]), hand, self.hand_radius)
 
 
 class Game:
