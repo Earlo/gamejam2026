@@ -21,7 +21,7 @@ async def find_random_person():
         for category in categories:
             print(" ", category)
 
-        if "Category:Living people" in categories:
+        if "Category:Living people" in categories or  any("births" in s for s in categories):
             return title
 
 
