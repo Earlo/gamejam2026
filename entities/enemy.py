@@ -20,15 +20,17 @@ class Enemy(Entity):
         turn_speed: float = 145,
         damage_scale: float = 0.72,
         aggression: int = 1,
+        attack_speed: int = 1,
         stat_points: dict[str, int] | None = None,
         article_length: int = 0,
         boss: bool = False,
     ) -> None:
         self.boss = boss
         self.aggression = aggression
+        self.attack_speed_points = attack_speed
         self.stat_points = dict(stat_points or {})
         self.article_length = article_length
-        self.cooldown_factor = max(0.52, 1.0 - aggression * 0.045)
+        self.cooldown_factor = max(0.42, 1.0 - attack_speed * 0.06)
         super().__init__(
             pos,
             arena,
@@ -40,6 +42,7 @@ class Enemy(Entity):
             speed=speed,
             turn_speed=turn_speed,
             damage_scale=damage_scale,
+            attack_speed_multiplier=1.0 + attack_speed * 0.055,
         )
         self.action_cooldown = 0.35 * self.cooldown_factor
         self.charging_side: str | None = None
@@ -75,14 +78,16 @@ class Enemy(Entity):
             self.strafe_timer = (1.15 if self.boss else 1.55) * self.cooldown_factor
 
         distance = self.pos.distance_to(target.pos)
-        preferred_distance = self.radius + target.radius + 29
+        preferred_distance = self.radius + target.radius + max(
+            15, 31 - self.aggression * 1.7
+        )
         forward_amount = 0.0
         if distance > preferred_distance + 8:
             forward_amount = 1.0
         elif distance < preferred_distance - 8:
             forward_amount = -0.45
 
-        attack_distance = self.radius + target.radius + 52
+        attack_distance = self.radius + target.radius + 50 + self.aggression * 2
         strafe_amount = 0.72 * self.strafe_direction if distance < attack_distance + 45 else 0.0
         if self.is_strafe_dashing:
             strafe_amount = 0.0
@@ -103,14 +108,19 @@ class Enemy(Entity):
         self.next_side = "right" if side == "left" else "left"
         self.action_count += 1
 
-        if self.action_count % 5 == 0 and self.strafe_dash(self.strafe_direction, 52):
+        dash_interval = max(2, 7 - min(5, self.aggression // 2))
+        if (
+            self.action_count % dash_interval == 0
+            and self.strafe_dash(self.strafe_direction, 52)
+        ):
             self.action_cooldown = 0.38 * self.cooldown_factor
             return
 
         target_is_strafing = (
             target_lateral_speed >= 65 and distance <= attack_distance + 16
         )
-        if target_is_strafing or self.action_count % 3 == 0:
+        kick_interval = max(2, 5 - min(3, self.aggression // 3))
+        if target_is_strafing or self.action_count % kick_interval == 0:
             self.start_kick(side)
             self.action_cooldown = 0.78 * self.cooldown_factor
         else:

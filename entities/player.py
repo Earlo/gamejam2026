@@ -36,6 +36,7 @@ class Player(Entity):
         self.backwards_speed = 135 + min(55, defeat_count)
         self.turn_speed = 190 + min(70, defeat_count * 1.2)
         self.damage_scale = 1.0 + min(1.5, defeat_count * 0.025)
+        self.set_attack_speed(1.0 + min(1.0, defeat_count * 0.02))
         self.dash_speed = max(480.0, self.speed * 2.75)
         self.fast_turn_speed = max(570.0, self.turn_speed * 3.2)
         if heal_growth:

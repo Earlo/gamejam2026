@@ -12,8 +12,11 @@ class Entity:
     """A ball-bodied brawler with two hands, two feet, and shared combat rules."""
 
     SIDES = ("left", "right")
-    punch_duration = 0.24
-    kick_duration = 0.42
+    base_punch_duration = 0.24
+    base_kick_duration = 0.42
+    base_kick_cooldown = 0.62
+    punch_duration = base_punch_duration
+    kick_duration = base_kick_duration
     max_charge_time = 0.75
     overcharge_max_time = 2.5
     overcharge_health_ratio = 0.35
@@ -32,6 +35,7 @@ class Entity:
         backwards_speed: float | None = None,
         turn_speed: float = 190,
         damage_scale: float = 1.0,
+        attack_speed_multiplier: float = 1.0,
     ) -> None:
         self.pos = pygame.Vector2(pos)
         self.arena = arena.copy()
@@ -46,6 +50,7 @@ class Entity:
         self.backwards_speed = backwards_speed if backwards_speed is not None else speed
         self.turn_speed = turn_speed
         self.damage_scale = damage_scale
+        self.set_attack_speed(attack_speed_multiplier)
 
         self.angle = 0.0
         self.flash = 0.0
@@ -65,6 +70,17 @@ class Entity:
         self.knockback_velocity = pygame.Vector2()
         self.defeated_time = 0.0
         self.ragdoll_spin = 0.0
+
+    def set_attack_speed(self, multiplier: float) -> None:
+        """Scale attack animations and reusable-action cooldowns."""
+        self.attack_speed_multiplier = max(0.5, multiplier)
+        self.punch_duration = (
+            self.base_punch_duration / self.attack_speed_multiplier
+        )
+        self.kick_duration = self.base_kick_duration / self.attack_speed_multiplier
+        self.kick_cooldown_duration = (
+            self.base_kick_cooldown / self.attack_speed_multiplier
+        )
 
     @staticmethod
     def clamp(value: float, low: float, high: float) -> float:
@@ -275,7 +291,7 @@ class Entity:
         ):
             return
         self.kick_time[side] = self.kick_duration
-        self.kick_cooldown[side] = 0.62
+        self.kick_cooldown[side] = self.kick_cooldown_duration
         self.kick_hits[side].clear()
 
     def update_state(self, dt: float) -> None:

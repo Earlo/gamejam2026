@@ -4,8 +4,11 @@ Beating a person unlocks the people linked from their Wikipedia page. Unlocked
 people walk into the arena from its edges over time, with up to four fighting at
 once. A defeated person is saved in `wikigraph/save.json` and is never spawned
 again. The same save also caches discovered connections and the current pool of
-possible enemies. If a page has no usable direct connections, the game searches
-two links deep; if that is also empty, it adds a new random person instead.
+possible enemies. If a page has no usable direct connections, the game adds a
+new random person as the root of a separate tree only after every active and
+waiting person in the current forest has been exhausted. Waiting enemies can
+enter before their own connections are known; child lookups prioritize people
+already in the arena.
 Connections are prefetched when an opponent enters the arena, but remain locked
 until that opponent is defeated.
 
@@ -16,9 +19,15 @@ not currently fighting.
 
 Wikipedia article byte length determines each enemy's total stat-point budget.
 Those points are distributed deterministically but unevenly between health,
-speed, damage, turning, and aggression, so people with similarly long articles
-can still fight very differently. The waiting queue previews every allocation.
-The player gains health, movement, turning, and damage strength with each defeat.
+speed, damage, turning, aggression, and attack speed, so people with similarly
+long articles can still fight very differently. Enemy scaling is deliberately
+steep, and attack speed reduces both action animations and cooldowns. The sidebar
+previews every allocation and marks each person's children CHARTED or SEARCHING.
+The player gains health, movement, turning, damage, and attack speed with each
+defeat.
+Only one opponent can be active initially. Every five defeats adds another
+simultaneous-enemy slot, up to eight. The sidebar shows both the active slot count
+and the names and stat allocations of everyone currently fighting.
 
 The goal is to defeat hitler.
 

@@ -280,11 +280,8 @@ async def _people_among(titles: Collection[str]) -> set[str]:
     results = await asyncio.gather(
         *(check(title) for title in titles), return_exceptions=True
     )
-    failures = [result for result in results if isinstance(result, BaseException)]
-    if failures:
-        raise RuntimeError(
-            f"Could not inspect {len(failures)} linked Wikipedia pages"
-        ) from failures[0]
+    # A deleted, protected, or temporarily unavailable linked page must not make
+    # an otherwise valid search retry forever.
     return {title for title in results if isinstance(title, str)}
 
 
@@ -299,37 +296,17 @@ async def _links_from(titles: Collection[str]) -> set[str]:
     results = await asyncio.gather(
         *(links(title) for title in titles), return_exceptions=True
     )
-    failures = [result for result in results if isinstance(result, BaseException)]
-    if failures:
-        raise RuntimeError(
-            f"Could not inspect links from {len(failures)} Wikipedia pages"
-        ) from failures[0]
     return set().union(
         *(result for result in results if isinstance(result, set))
     )
 
 
 async def get_connected_people(person_name: str, depth: int = 1) -> set[str]:
-    """Return biography pages linked from a person, up to ``depth`` hops away."""
+    """Return biography pages linked directly from a person's article."""
     if depth <= 0:
         return set()
-
-    connected_people: set[str] = set()
-    visited: set[str] = set()
-    frontier = {person_name}
-
-    for _ in range(depth):
-        pages = frontier - visited
-        visited.update(pages)
-        link_titles = await _links_from(pages)
-        if not link_titles:
-            break
-        people = await _people_among(link_titles - visited)
-        connected_people.update(people)
-        # Keep every linked page in the frontier. The second-hop route may pass
-        # through an organization, event, place, or other non-biography page.
-        frontier = link_titles
-
+    link_titles = await _links_from({person_name})
+    connected_people = await _people_among(link_titles - {person_name})
     connected_people.discard(person_name)
     return connected_people
 
