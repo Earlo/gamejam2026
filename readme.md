@@ -14,15 +14,18 @@ Top down brawler with 360 rotation
 Controls.
 W: Forward
 S: Backwards
-A: Turn left
-D: Turn right
-Q: Fast 90 degrees turn to left
-E: Fast 90 degress turn to right
+Left-Shift: Toggle lock on the closest enemy
+
+A: Turn left / Strafe when locked in
+D: Turn right / Strafe when locked in
+Q: Fast 90 degrees turn to left / Strafe dash left when locked in
+E: Fast 90 degress turn to right / Strafe dash right when locked in
 
 J: Charge up left punch / weapon (release to swing / use / shoot)
 K: Charge up right punch / weapon (release to swing / use / shoot)
 U: Left kick
 I: Right kick
+
 
 ## Run the prototype
 
