@@ -477,15 +477,29 @@ class Game:
             self.player.handle_keyup(event.key)
         return True
 
-    def resolve_entity_collisions(self) -> None:
-        """Keep every living entity's circular body from overlapping another."""
+    def resolve_entity_collisions(
+        self,
+        frame_start_positions: dict[Entity, pygame.Vector2] | None = None,
+    ) -> None:
+        """Resolve crossed paths and keep circular bodies from overlapping."""
         entities: list[Entity] = [self.player, *self.enemies]
         processed_impacts: set[tuple[int, int]] = set()
-        for _ in range(12):
+        for pass_index in range(12):
             corrected_overlap = False
             for index, entity in enumerate(entities):
                 for other in entities[index + 1 :]:
                     pair = (id(entity), id(other))
+                    if frame_start_positions is not None and pass_index == 0:
+                        swept_collision = entity.resolve_swept_collision(
+                            other,
+                            frame_start_positions[entity],
+                            frame_start_positions[other],
+                            apply_impact=pair not in processed_impacts,
+                        )
+                        if swept_collision:
+                            processed_impacts.add(pair)
+                            corrected_overlap = True
+                            continue
                     collided = entity.separate_from(
                         other, apply_impact=pair not in processed_impacts
                     )
@@ -503,10 +517,13 @@ class Game:
             return
 
         self.spawn_from_possible_people(dt)
+        frame_start_positions = {
+            entity: entity.pos.copy() for entity in [self.player, *self.enemies]
+        }
         self.player.update(dt, pygame.key.get_pressed(), self.enemies)
         for enemy in self.enemies:
             enemy.update(dt, self.player)
-        self.resolve_entity_collisions()
+        self.resolve_entity_collisions(frame_start_positions)
 
         self.player.attack(self.enemies)
         for enemy in self.enemies:

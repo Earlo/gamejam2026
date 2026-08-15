@@ -249,6 +249,73 @@ class Entity:
         other.keep_in_arena()
         return True
 
+    def resolve_swept_collision(
+        self,
+        other: Entity,
+        self_start: pygame.Vector2,
+        other_start: pygame.Vector2,
+        *,
+        apply_impact: bool = True,
+    ) -> bool:
+        """Resolve a collision crossed between the start and end of a frame.
+
+        Ordinary overlap checks only see the final positions, so a fast fling can
+        move from one side of a body to the other in a single frame. Treat both
+        frame movements as line segments and solve for the first time their
+        circular bodies touch.
+        """
+        minimum_distance = self.radius + other.radius
+        start_offset = other_start - self_start
+
+        # Existing overlaps are handled by separate_from(), which has a stable
+        # fallback normal and can correct the full penetration depth.
+        if start_offset.length_squared() <= minimum_distance * minimum_distance:
+            return False
+
+        self_movement = self.pos - self_start
+        other_movement = other.pos - other_start
+        relative_movement = other_movement - self_movement
+        movement_squared = relative_movement.length_squared()
+        if movement_squared <= 0:
+            return False
+
+        linear_term = 2 * start_offset.dot(relative_movement)
+        constant_term = (
+            start_offset.length_squared() - minimum_distance * minimum_distance
+        )
+        discriminant = (
+            linear_term * linear_term
+            - 4 * movement_squared * constant_term
+        )
+        if discriminant < 0:
+            return False
+
+        impact_time = (
+            -linear_term - math.sqrt(discriminant)
+        ) / (2 * movement_squared)
+        if not 0 <= impact_time <= 1:
+            return False
+
+        self.pos = self_start + self_movement * impact_time
+        other.pos = other_start + other_movement * impact_time
+        normal = other.pos - self.pos
+        if normal.length_squared() == 0:
+            normal = pygame.Vector2(1, 0)
+        else:
+            normal = normal.normalize()
+
+        if apply_impact:
+            self.resolve_impact(other, normal)
+
+        # Leave the bodies just outside contact so floating-point rounding does
+        # not make the iterative overlap pass resolve the same pair again.
+        contact_slop = normal * 0.005
+        self.pos -= contact_slop
+        other.pos += contact_slop
+        self.keep_in_arena()
+        other.keep_in_arena()
+        return True
+
     def resolve_impact(self, other: Entity, normal: pygame.Vector2) -> None:
         """Transfer a strong collision into damage and secondary knockback."""
         closing_speed = (self.knockback_velocity - other.knockback_velocity).dot(normal)
