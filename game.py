@@ -8,7 +8,7 @@ import random
 
 import pygame
 
-from entities import Enemy, Entity, Player
+from entities import Enemy, Entity, Player, STAT_KEYS, allocate_enemy_stats
 from wikigraph import wiki as wiki_api
 
 
@@ -31,6 +31,7 @@ class Game:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 24)
         self.small_font = pygame.font.Font(None, 19)
+        self.tiny_font = pygame.font.Font(None, 16)
         self.big_font = pygame.font.Font(None, 64)
         self.wiki_loop = asyncio.new_event_loop()
         self.reset()
@@ -47,7 +48,11 @@ class Game:
         self.tree_roots = progress["roots"]
         self.defeated_people = set(progress["defeated"])
         self.possible_enemies = set(progress["pending"]) - self.defeated_people
+        self.player.apply_defeat_progress(len(self.defeated_people))
         self.active_people: set[str] = set()
+        self.people_waiting_for_stats: set[str] = set()
+        self.profile_loading_people: set[str] = set()
+        self.failed_article_profiles: set[str] = set()
         self.enemies: list[Enemy] = []
         self.spawn_timer = 0.0
         self.failed_connection_lookups: dict[str, int] = {}
@@ -77,6 +82,7 @@ class Game:
         # source can never be spawned again, but its connections are still useful.
         for name in unfinished_defeats:
             self.request_connections(name)
+        self.request_article_lengths(self.possible_enemies)
 
     def save_progress(self) -> None:
         wiki_api.save_to_graph(
@@ -109,15 +115,49 @@ class Game:
         )
         self.wiki_tasks[task] = ("connections", name, depth)
 
+    def request_article_lengths(self, names: set[str]) -> None:
+        candidates = sorted(
+            (
+                name
+                for name in names
+                if not self.ensure_person(name)["article_loaded"]
+                and name not in self.profile_loading_people
+                and name not in self.failed_article_profiles
+            ),
+            key=str.casefold,
+        )[:32]
+        if not candidates:
+            return
+        self.profile_loading_people.update(candidates)
+        task = self.wiki_loop.create_task(wiki_api.get_article_lengths(candidates))
+        self.wiki_tasks[task] = ("lengths", None, 0)
+
     def ensure_person(self, name: str) -> dict[str, object]:
-        return self.people_graph.setdefault(
+        person = self.people_graph.setdefault(
             name,
             {
                 "connections": [],
                 "connections_loaded": False,
+                "article_length": 0,
+                "article_loaded": False,
+                "stat_points": allocate_enemy_stats(name, 0),
                 "defeated": False,
             },
         )
+        person.setdefault("connections", [])
+        person.setdefault("connections_loaded", False)
+        person.setdefault("article_length", 0)
+        person.setdefault("article_loaded", False)
+        person.setdefault("stat_points", allocate_enemy_stats(name, 0))
+        person.setdefault("defeated", False)
+        saved_points = person["stat_points"]
+        if not isinstance(saved_points, dict) or any(
+            not isinstance(saved_points.get(stat), int) for stat in STAT_KEYS
+        ):
+            person["stat_points"] = allocate_enemy_stats(
+                name, int(person["article_length"])
+            )
+        return person
 
     def register_person(self, name: str, *, root: bool = False) -> None:
         self.ensure_person(name)
@@ -166,6 +206,31 @@ class Game:
                 self.notice_time = 2.8
                 continue
 
+            if kind == "lengths":
+                lengths = dict(result)
+                ready_to_spawn: list[str] = []
+                for name, raw_length in lengths.items():
+                    self.profile_loading_people.discard(name)
+                    article_length = max(0, int(raw_length))
+                    person = self.ensure_person(name)
+                    person["article_length"] = article_length
+                    person["article_loaded"] = article_length > 0
+                    person["stat_points"] = allocate_enemy_stats(
+                        name, article_length
+                    )
+                    if article_length <= 0:
+                        self.failed_article_profiles.add(name)
+                    if name in self.people_waiting_for_stats:
+                        self.people_waiting_for_stats.discard(name)
+                        ready_to_spawn.append(name)
+                self.save_progress()
+                for name in ready_to_spawn:
+                    if sum(enemy.alive for enemy in self.enemies) >= MAX_ACTIVE_ENEMIES:
+                        break
+                    self.spawn_person(name)
+                self.request_article_lengths(self.possible_enemies)
+                continue
+
             if source is None:
                 continue
             connections = {str(name) for name in result if str(name) != source}
@@ -201,6 +266,7 @@ class Game:
             if source in self.defeated_people:
                 for name in connections:
                     self.register_person(name)
+                self.request_article_lengths(usable_connections)
                 self.spawn_timer = min(self.spawn_timer, 0.45)
                 if self.state == "loading" and not self.enemies:
                     self.spawn_person(random.choice(sorted(self.possible_enemies)))
@@ -250,9 +316,19 @@ class Game:
 
     def spawn_person(self, name: str) -> None:
         """Spawn an unlocked, undefeated person once, at an arena edge."""
-        if name in self.defeated_people or name in self.active_people:
+        if (
+            name in self.defeated_people
+            or name in self.active_people
+            or name in self.people_waiting_for_stats
+        ):
             return
         person = self.ensure_person(name)
+        if not person["article_loaded"] and name not in self.failed_article_profiles:
+            self.people_waiting_for_stats.add(name)
+            self.request_article_lengths({name})
+            return
+
+        stat_points = dict(person["stat_points"])
         is_boss = name.casefold() in {"adolf hitler", "hitler"}
         radius = 30 if is_boss else 12
         enemy = Enemy(
@@ -260,8 +336,13 @@ class Game:
             name,
             ARENA,
             radius=radius,
-            max_health=130 if is_boss else 38,
-            speed=78 if is_boss else 58 + sum(map(ord, name)) % 19,
+            max_health=34 + stat_points["health"] * 6,
+            speed=52 + stat_points["speed"] * 4.5,
+            turn_speed=115 + stat_points["turn"] * 9,
+            damage_scale=0.58 + stat_points["damage"] * 0.07,
+            aggression=stat_points["aggression"],
+            stat_points=stat_points,
+            article_length=int(person["article_length"]),
             boss=is_boss,
         )
         self.enemies.append(enemy)
@@ -277,6 +358,7 @@ class Game:
             self.defeated_people.add(name)
             self.possible_enemies.discard(name)
             self.active_people.discard(name)
+            self.player.gain_defeat_strength()
             self.ensure_person(name)["defeated"] = True
 
             cached_connections = self.people_graph[name]["connections"]
@@ -289,6 +371,9 @@ class Game:
             else:
                 for connected_name in cached_connections:
                     self.register_person(connected_name)
+                self.request_article_lengths(
+                    set(cached_connections) - self.defeated_people
+                )
                 self.notice = f"People connected to {name} are now possible enemies"
                 self.spawn_timer = min(self.spawn_timer, 0.45)
             self.save_progress()
@@ -300,9 +385,15 @@ class Game:
     def spawn_from_possible_people(self, dt: float) -> None:
         self.spawn_timer = max(0.0, self.spawn_timer - dt)
         living_count = sum(enemy.alive for enemy in self.enemies)
+        living_count += len(self.people_waiting_for_stats)
         if living_count >= MAX_ACTIVE_ENEMIES or self.spawn_timer > 0:
             return
-        eligible = self.possible_enemies - self.active_people - self.defeated_people
+        eligible = (
+            self.possible_enemies
+            - self.active_people
+            - self.defeated_people
+            - self.people_waiting_for_stats
+        )
         if not eligible:
             return
         self.spawn_person(random.choice(sorted(eligible)))
@@ -402,9 +493,21 @@ class Game:
             INK,
         )
         self.screen.blit(summary, (panel.left + 16, panel.top + 45))
+        player_power = self.tiny_font.render(
+            f"PLAYER POWER +{self.player.defeat_count}", True, (68, 103, 151)
+        )
+        self.screen.blit(player_power, (panel.left + 16, panel.top + 64))
+        legend = self.tiny_font.render(
+            "HP health · SP speed · DM damage", True, (76, 72, 68)
+        )
+        self.screen.blit(legend, (panel.left + 16, panel.top + 80))
+        legend_two = self.tiny_font.render(
+            "TN turning · AI aggression", True, (76, 72, 68)
+        )
+        self.screen.blit(legend_two, (panel.left + 16, panel.top + 94))
 
-        first_y = panel.top + 76
-        line_height = 23
+        first_y = panel.top + 116
+        line_height = 36
         visible_count = max(0, (panel.bottom - first_y - 28) // line_height)
         for index, name in enumerate(waiting[:visible_count]):
             available_width = panel.width - 44
@@ -418,6 +521,20 @@ class Game:
                 display_name = display_name.rstrip() + "…"
             label = self.small_font.render(f"{index + 1}. {display_name}", True, INK)
             self.screen.blit(label, (panel.left + 16, first_y + index * line_height))
+            person = self.ensure_person(name)
+            points = person["stat_points"]
+            total = sum(points[stat] for stat in STAT_KEYS)
+            loading = "…" if not person["article_loaded"] else ""
+            stats_label = self.tiny_font.render(
+                f"P{total}{loading}  HP{points['health']}  SP{points['speed']}  "
+                f"DM{points['damage']}  TN{points['turn']}  AI{points['aggression']}",
+                True,
+                (76, 72, 68),
+            )
+            self.screen.blit(
+                stats_label,
+                (panel.left + 31, first_y + index * line_height + 18),
+            )
 
         hidden_count = len(waiting) - visible_count
         if hidden_count > 0:
@@ -450,7 +567,7 @@ class Game:
 
         self.draw_bar(
             pygame.Rect(PLAYFIELD_WIDTH - 254, 20, 220, 24),
-            self.player.health / 100,
+            self.player.health / self.player.max_health,
             (90, 184, 104),
             f"HEALTH  {round(self.player.health)}",
         )

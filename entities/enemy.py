@@ -17,9 +17,18 @@ class Enemy(Entity):
         radius: int = 12,
         max_health: float = 38,
         speed: float = 68,
+        turn_speed: float = 145,
+        damage_scale: float = 0.72,
+        aggression: int = 1,
+        stat_points: dict[str, int] | None = None,
+        article_length: int = 0,
         boss: bool = False,
     ) -> None:
         self.boss = boss
+        self.aggression = aggression
+        self.stat_points = dict(stat_points or {})
+        self.article_length = article_length
+        self.cooldown_factor = max(0.52, 1.0 - aggression * 0.045)
         super().__init__(
             pos,
             arena,
@@ -29,10 +38,10 @@ class Enemy(Entity):
             radius=radius,
             max_health=max_health,
             speed=speed,
-            turn_speed=165 if boss else 145,
-            damage_scale=1.35 if boss else 0.72,
+            turn_speed=turn_speed,
+            damage_scale=damage_scale,
         )
-        self.action_cooldown = 0.35
+        self.action_cooldown = 0.35 * self.cooldown_factor
         self.charging_side: str | None = None
         self.charge_goal = 0.0
         self.next_side = "left"
@@ -63,7 +72,7 @@ class Enemy(Entity):
         self.strafe_timer -= dt
         if self.strafe_timer <= 0:
             self.strafe_direction *= -1
-            self.strafe_timer = 1.15 if self.boss else 1.55
+            self.strafe_timer = (1.15 if self.boss else 1.55) * self.cooldown_factor
 
         distance = self.pos.distance_to(target.pos)
         preferred_distance = self.radius + target.radius + 29
@@ -84,7 +93,7 @@ class Enemy(Entity):
             if self.charge[side] >= self.charge_goal:
                 self.release_punch(side)
                 self.charging_side = None
-                self.action_cooldown = 0.72
+                self.action_cooldown = 0.72 * self.cooldown_factor
             return
 
         if distance > attack_distance or self.action_cooldown > 0:
@@ -95,7 +104,7 @@ class Enemy(Entity):
         self.action_count += 1
 
         if self.action_count % 5 == 0 and self.strafe_dash(self.strafe_direction, 52):
-            self.action_cooldown = 0.38
+            self.action_cooldown = 0.38 * self.cooldown_factor
             return
 
         target_is_strafing = (
@@ -103,7 +112,7 @@ class Enemy(Entity):
         )
         if target_is_strafing or self.action_count % 3 == 0:
             self.start_kick(side)
-            self.action_cooldown = 0.78
+            self.action_cooldown = 0.78 * self.cooldown_factor
         else:
             self.start_charging(side)
             self.charging_side = side

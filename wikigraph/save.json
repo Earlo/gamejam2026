@@ -1,2 +1,23 @@
-[
-]
+{
+  "allDefeated": [
+    "John Ludwig Wees"
+  ],
+  "allPending": [],
+  "trees": [
+    {
+      "name": "John Ludwig Wees",
+      "defeated": true,
+      "connectionsLoaded": false,
+      "articleLength": 3130,
+      "articleLoaded": true,
+      "stats": {
+        "health": 1,
+        "speed": 1,
+        "damage": 3,
+        "turn": 1,
+        "aggression": 2
+      },
+      "connections": {}
+    }
+  ]
+}

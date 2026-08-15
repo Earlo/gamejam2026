@@ -24,6 +24,29 @@ class Player(Entity):
         self.target: Entity | None = None
         self.locked_on = False
         self.target_indicator_angle = 0.0
+        self.defeat_count = 0
+
+    def apply_defeat_progress(self, defeat_count: int, *, heal_growth: bool = False) -> None:
+        """Scale player attributes from persistent defeats with diminishing caps."""
+        defeat_count = max(0, defeat_count)
+        old_max_health = self.max_health
+        self.defeat_count = defeat_count
+        self.max_health = 100 + min(160, defeat_count * 2.4)
+        self.speed = 215 + min(75, defeat_count * 1.4)
+        self.backwards_speed = 135 + min(55, defeat_count)
+        self.turn_speed = 190 + min(70, defeat_count * 1.2)
+        self.damage_scale = 1.0 + min(1.5, defeat_count * 0.025)
+        self.dash_speed = max(480.0, self.speed * 2.75)
+        self.fast_turn_speed = max(570.0, self.turn_speed * 3.2)
+        if heal_growth:
+            self.health = min(
+                self.max_health, self.health + self.max_health - old_max_health
+            )
+        else:
+            self.health = self.max_health
+
+    def gain_defeat_strength(self) -> None:
+        self.apply_defeat_progress(self.defeat_count + 1, heal_growth=True)
 
     def closest_target(self, targets: list[Entity]) -> Entity | None:
         living_targets = [target for target in targets if target.alive]

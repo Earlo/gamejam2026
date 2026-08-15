@@ -14,6 +14,12 @@ fields. Each tree recursively nests people under a keyed `connections` object.
 The game window includes a right-hand queue showing people who are unlocked but
 not currently fighting.
 
+Wikipedia article byte length determines each enemy's total stat-point budget.
+Those points are distributed deterministically but unevenly between health,
+speed, damage, turning, and aggression, so people with similarly long articles
+can still fight very differently. The waiting queue previews every allocation.
+The player gains health, movement, turning, and damage strength with each defeat.
+
 The goal is to defeat hitler.
 
 

@@ -18,7 +18,14 @@ wiki = wikipediaapi.AsyncWikipedia(user_agent=USER_AGENT, language="en")
 
 
 def _empty_person() -> dict[str, Any]:
-    return {"connections": [], "connections_loaded": False, "defeated": False}
+    return {
+        "connections": [],
+        "connections_loaded": False,
+        "article_length": 0,
+        "article_loaded": False,
+        "stat_points": {},
+        "defeated": False,
+    }
 
 
 def load_progress(path: Path = SAVE_PATH) -> dict[str, Any]:
@@ -63,6 +70,16 @@ def load_progress(path: Path = SAVE_PATH) -> dict[str, Any]:
                 person["connections_loaded"]
                 or node.get("connectionsLoaded", bool(children))
             )
+            article_length = node.get("articleLength", 0)
+            if isinstance(article_length, (int, float)) and article_length >= 0:
+                person["article_length"] = max(
+                    person["article_length"], int(article_length)
+                )
+            person["article_loaded"] = bool(
+                person["article_loaded"] or node.get("articleLoaded", False)
+            )
+            if isinstance(node.get("stats"), dict):
+                person["stat_points"] = dict(node["stats"])
             person["defeated"] = bool(
                 person["defeated"] or node.get("defeated", False) or name in defeated
             )
@@ -118,6 +135,9 @@ def load_progress(path: Path = SAVE_PATH) -> dict[str, Any]:
         graph[name] = {
             "connections": connections,
             "connections_loaded": isinstance(raw_connections, list),
+            "article_length": 0,
+            "article_loaded": False,
+            "stat_points": {},
             "defeated": bool(record.get("defeated", False)),
         }
     for child in children:
@@ -161,6 +181,9 @@ def save_to_graph(
                 "name": name,
                 "defeated": name in defeated_names,
                 "connectionsLoaded": bool(person.get("connections_loaded", False)),
+                "articleLength": max(0, int(person.get("article_length", 0))),
+                "articleLoaded": bool(person.get("article_loaded", False)),
+                "stats": dict(person.get("stat_points", {})),
                 "connections": {},
             }
         expanded_nodes.add(name)
@@ -177,6 +200,9 @@ def save_to_graph(
             "name": name,
             "defeated": name in defeated_names,
             "connectionsLoaded": bool(person.get("connections_loaded", False)),
+            "articleLength": max(0, int(person.get("article_length", 0))),
+            "articleLoaded": bool(person.get("article_loaded", False)),
+            "stats": dict(person.get("stat_points", {})),
             "connections": connections,
         }
 
@@ -226,6 +252,21 @@ async def find_random_person(excluded: Collection[str] = ()) -> str:
         title = next(iter(random_pages))
         if title.casefold() not in excluded_names and await is_person_page(title):
             return title
+
+
+async def get_article_lengths(titles: Collection[str]) -> dict[str, int]:
+    """Fetch Wikipedia's article byte lengths with bounded concurrency."""
+    semaphore = asyncio.Semaphore(10)
+
+    async def fetch(title: str) -> tuple[str, int]:
+        try:
+            async with semaphore:
+                length = await wiki.page(title).length
+            return title, max(0, int(length))
+        except Exception:
+            return title, 0
+
+    return dict(await asyncio.gather(*(fetch(title) for title in titles)))
 
 
 async def _people_among(titles: Collection[str]) -> set[str]:
