@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import random
 
 import pygame
 
 from entities import Enemy, Entity, Player
+from wikigraph import wiki as wiki_api
 
 
 WIDTH, HEIGHT = 960, 640
 ARENA = pygame.Rect(34, 70, WIDTH - 68, HEIGHT - 104)
 FPS = 60
+MAX_ACTIVE_ENEMIES = 4
+SPAWN_INTERVAL = 1.6
 
 INK = (35, 38, 48)
 PAPER = (239, 232, 210)
@@ -27,40 +31,209 @@ class Game:
         self.font = pygame.font.Font(None, 24)
         self.small_font = pygame.font.Font(None, 19)
         self.big_font = pygame.font.Font(None, 64)
+        self.wiki_loop = asyncio.new_event_loop()
         self.reset()
 
     def reset(self) -> None:
+        for task in getattr(self, "wiki_tasks", {}):
+            task.cancel()
+        self.wiki_tasks: dict[asyncio.Task[object], tuple[str, str | None]] = {}
         self.player = Player(ARENA)
-        self.stage = 0
-        self.state = "playing"
-        self.notice = "Defeat the stranger"
-        self.notice_time = 2.2
-        self.enemies = [
-            Enemy(pygame.Vector2(WIDTH / 2, 180), "Stranger", ARENA, speed=58)
-        ]
+        self.people_graph = wiki_api.load_graph()
+        self.defeated_people = {
+            name for name, person in self.people_graph.items() if person["defeated"]
+        }
+        self.possible_enemies = {
+            name for name, person in self.people_graph.items() if not person["defeated"]
+        }
+        self.active_people: set[str] = set()
+        self.enemies: list[Enemy] = []
+        self.spawn_timer = 0.0
+        self.failed_connection_lookups: set[str] = set()
+        self.wikipedia_retry_timer = 0.0
+        self.state = "loading"
+        self.notice = "Finding a random person on Wikipedia..."
+        self.notice_time = 0.0
 
-    def spawn_connected_people(self) -> None:
-        self.enemies = [
-            Enemy(pygame.Vector2(210, 160), "Connected A", ARENA, speed=64),
-            Enemy(pygame.Vector2(750, 190), "Connected B", ARENA, speed=72),
-        ]
-        self.notice = "Connected people appeared!"
-        self.notice_time = 2.2
+        # Resume cached progress with one opponent. A brand-new graph starts with
+        # exactly one random Wikipedia biography.
+        if self.possible_enemies:
+            self.spawn_person(random.choice(sorted(self.possible_enemies)))
+            self.spawn_timer = SPAWN_INTERVAL
+            self.state = "playing"
+        else:
+            self.request_random_person()
 
-    def spawn_final_boss(self) -> None:
-        self.enemies = [
-            Enemy(
-                pygame.Vector2(WIDTH / 2, 165),
-                "HITLER",
-                ARENA,
-                radius=34,
-                max_health=130,
-                speed=78,
-                boss=True,
+        # A lookup interrupted in an earlier run is safe to resume: its defeated
+        # source can never be spawned again, but its connections are still useful.
+        for name in self.defeated_people:
+            if self.people_graph[name]["connections"] is None:
+                self.request_connections(name)
+
+    def request_random_person(self) -> None:
+        if any(kind == "random" for kind, _ in self.wiki_tasks.values()):
+            return
+        task = self.wiki_loop.create_task(
+            wiki_api.find_random_person(self.defeated_people)
+        )
+        self.wiki_tasks[task] = ("random", None)
+
+    def request_connections(self, name: str) -> None:
+        if any(
+            kind == "connections" and source == name
+            for kind, source in self.wiki_tasks.values()
+        ):
+            return
+        task = self.wiki_loop.create_task(wiki_api.get_connected_people(name))
+        self.wiki_tasks[task] = ("connections", name)
+
+    def register_person(self, name: str) -> None:
+        if name not in self.people_graph:
+            self.people_graph[name] = {"connections": None, "defeated": False}
+        if name not in self.defeated_people:
+            self.possible_enemies.add(name)
+
+    def poll_wikipedia(self) -> None:
+        """Give async HTTP requests a non-blocking turn, then collect results."""
+        if not self.wiki_tasks:
+            return
+        self.wiki_loop.run_until_complete(asyncio.sleep(0))
+        for task, (kind, source) in list(self.wiki_tasks.items()):
+            if not task.done():
+                continue
+            del self.wiki_tasks[task]
+            try:
+                result = task.result()
+            except asyncio.CancelledError:
+                continue
+            except Exception as error:
+                print(f"Wikipedia {kind} lookup failed: {error}")
+                self.notice_time = 4.0
+                if kind == "random" and not self.enemies:
+                    self.notice = "Wikipedia lookup failed — press R to retry"
+                    self.state = "error"
+                elif source is not None:
+                    self.failed_connection_lookups.add(source)
+                    self.wikipedia_retry_timer = 6.0
+                    self.notice = "Connection lookup failed — retrying shortly"
+                continue
+
+            if kind == "random":
+                name = str(result)
+                self.register_person(name)
+                wiki_api.save_to_graph(self.people_graph)
+                self.spawn_person(name)
+                self.spawn_timer = SPAWN_INTERVAL
+                self.state = "playing"
+                self.notice = f"Your first opponent: {name}"
+                self.notice_time = 2.8
+                continue
+
+            if source is None:
+                continue
+            connections = {
+                str(name)
+                for name in result
+                if str(name) != source and str(name) not in self.defeated_people
+            }
+            self.people_graph[source]["connections"] = sorted(
+                connections, key=str.casefold
             )
-        ]
-        self.notice = "Final target: HITLER"
-        self.notice_time = 2.6
+            for name in connections:
+                self.register_person(name)
+            wiki_api.save_to_graph(self.people_graph)
+            self.spawn_timer = min(self.spawn_timer, 0.45)
+            self.notice = f"{len(connections)} people connected to {source} unlocked"
+            self.notice_time = 3.0
+
+    def retry_failed_connections(self, dt: float) -> None:
+        if not self.failed_connection_lookups:
+            return
+        self.wikipedia_retry_timer = max(0.0, self.wikipedia_retry_timer - dt)
+        if self.wikipedia_retry_timer > 0:
+            return
+        names = self.failed_connection_lookups
+        self.failed_connection_lookups = set()
+        for name in names:
+            self.request_connections(name)
+
+    def edge_spawn_position(self, radius: int) -> pygame.Vector2:
+        """Choose a point just inside one of the four arena edges."""
+        side = random.choice(("top", "right", "bottom", "left"))
+        if side == "top":
+            return pygame.Vector2(
+                random.uniform(ARENA.left + radius, ARENA.right - radius),
+                ARENA.top + radius,
+            )
+        if side == "bottom":
+            return pygame.Vector2(
+                random.uniform(ARENA.left + radius, ARENA.right - radius),
+                ARENA.bottom - radius,
+            )
+        if side == "left":
+            return pygame.Vector2(
+                ARENA.left + radius,
+                random.uniform(ARENA.top + radius, ARENA.bottom - radius),
+            )
+        return pygame.Vector2(
+            ARENA.right - radius,
+            random.uniform(ARENA.top + radius, ARENA.bottom - radius),
+        )
+
+    def spawn_person(self, name: str) -> None:
+        """Spawn an unlocked, undefeated person once, at an arena edge."""
+        if name in self.defeated_people or name in self.active_people:
+            return
+        is_boss = name.casefold() in {"adolf hitler", "hitler"}
+        radius = 30 if is_boss else 12
+        enemy = Enemy(
+            self.edge_spawn_position(radius),
+            name,
+            ARENA,
+            radius=radius,
+            max_health=130 if is_boss else 38,
+            speed=78 if is_boss else 58 + sum(map(ord, name)) % 19,
+            boss=is_boss,
+        )
+        self.enemies.append(enemy)
+        self.active_people.add(name)
+
+    def record_new_defeats(self) -> None:
+        for enemy in self.enemies:
+            name = enemy.name
+            if enemy.alive or name in self.defeated_people:
+                continue
+            self.defeated_people.add(name)
+            self.possible_enemies.discard(name)
+            self.active_people.discard(name)
+            self.people_graph.setdefault(
+                name, {"connections": None, "defeated": False}
+            )["defeated"] = True
+            wiki_api.save_to_graph(self.people_graph)
+
+            cached_connections = self.people_graph[name]["connections"]
+            if cached_connections is None:
+                self.request_connections(name)
+                self.notice = f"Finding people connected to {name}..."
+            else:
+                for connected_name in cached_connections:
+                    self.register_person(connected_name)
+                self.notice = f"People connected to {name} are now possible enemies"
+            self.notice_time = 2.8
+
+            if name.casefold() in {"adolf hitler", "hitler"}:
+                self.state = "won"
+
+    def spawn_from_possible_people(self, dt: float) -> None:
+        self.spawn_timer = max(0.0, self.spawn_timer - dt)
+        living_count = sum(enemy.alive for enemy in self.enemies)
+        if living_count >= MAX_ACTIVE_ENEMIES or self.spawn_timer > 0:
+            return
+        eligible = self.possible_enemies - self.active_people - self.defeated_people
+        if not eligible:
+            return
+        self.spawn_person(random.choice(sorted(eligible)))
+        self.spawn_timer = SPAWN_INTERVAL
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         if event.type == pygame.QUIT:
@@ -95,9 +268,12 @@ class Game:
                 break
 
     def update(self, dt: float) -> None:
+        self.poll_wikipedia()
+        self.retry_failed_connections(dt)
         if self.state != "playing":
             return
 
+        self.spawn_from_possible_people(dt)
         self.player.update(dt, pygame.key.get_pressed(), self.enemies)
         for enemy in self.enemies:
             enemy.update(dt, self.player)
@@ -108,19 +284,10 @@ class Game:
             if enemy.alive:
                 enemy.attack((self.player,))
         self.resolve_entity_collisions()
+        self.record_new_defeats()
         self.enemies = [
             enemy for enemy in self.enemies if not enemy.ready_to_despawn
         ]
-
-        if not self.enemies:
-            if self.stage == 0:
-                self.stage = 1
-                self.spawn_connected_people()
-            elif self.stage == 1:
-                self.stage = 2
-                self.spawn_final_boss()
-            else:
-                self.state = "won"
 
         if self.player.health <= 0:
             self.player.health = 0
@@ -162,9 +329,15 @@ class Game:
         title = self.font.render("KILIN KOLIN", True, INK)
         self.screen.blit(title, (34, 22))
         objective = self.small_font.render(
-            "Goal: follow the connections and defeat Hitler", True, INK
+            "Goal: follow Wikipedia connections and defeat Hitler", True, INK
         )
         self.screen.blit(objective, (175, 27))
+
+        remaining = len(self.possible_enemies - self.defeated_people)
+        progress = self.small_font.render(
+            f"POSSIBLE {remaining}   DEFEATED {len(self.defeated_people)}", True, INK
+        )
+        self.screen.blit(progress, progress.get_rect(topright=(WIDTH - 34, 50)))
 
         self.draw_bar(
             pygame.Rect(WIDTH - 254, 20, 220, 24),
@@ -206,15 +379,24 @@ class Game:
             pygame.draw.rect(self.screen, INK, box, 2, border_radius=8)
             self.screen.blit(message, message.get_rect(center=box.center))
 
-        if self.state != "playing":
+        if self.state in {"won", "lost", "error", "loading"}:
             veil = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             veil.fill((25, 28, 36, 170))
             self.screen.blit(veil, (0, 0))
-            headline = "YOU WIN!" if self.state == "won" else "KNOCKED OUT"
+            headline = {
+                "won": "YOU WIN!",
+                "lost": "KNOCKED OUT",
+                "error": "WIKIPEDIA UNAVAILABLE",
+                "loading": "SEARCHING WIKIPEDIA...",
+            }[self.state]
             text = self.big_font.render(headline, True, PAPER)
             self.screen.blit(text, text.get_rect(center=(WIDTH / 2, HEIGHT / 2 - 25)))
-            restart = self.font.render("Press R to play again", True, PAPER)
-            self.screen.blit(restart, restart.get_rect(center=(WIDTH / 2, HEIGHT / 2 + 35)))
+            if self.state != "loading":
+                restart = self.font.render("Press R to try again", True, PAPER)
+                self.screen.blit(
+                    restart,
+                    restart.get_rect(center=(WIDTH / 2, HEIGHT / 2 + 35)),
+                )
 
         pygame.display.flip()
 
@@ -232,6 +414,14 @@ class Game:
             frames += 1
             if smoke_frames and frames >= smoke_frames:
                 running = False
+        tasks = list(self.wiki_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            # One loop turn delivers cancellation without making Quit wait for an
+            # in-flight HTTP timeout.
+            self.wiki_loop.run_until_complete(asyncio.sleep(0))
+        self.wiki_loop.close()
         pygame.quit()
 
 

@@ -1,6 +1,10 @@
-Kilin Kolin Game is brawler game that pics a random person from wikipedia.
+Kilin Kolin is a brawler game that picks a random person from Wikipedia.
 
-Beating a person spawns in all the connected people as new enemies.
+Beating a person unlocks the people linked from their Wikipedia page. Unlocked
+people walk into the arena from its edges over time, with up to four fighting at
+once. A defeated person is saved in `wikigraph/save.json` and is never spawned
+again. The same save also caches discovered connections and the current pool of
+possible enemies.
 
 The goal is to defeat hitler.
 
