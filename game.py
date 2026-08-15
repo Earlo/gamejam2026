@@ -9,10 +9,13 @@ import random
 import pygame
 
 from entities import (
+    DroppedItem,
     Enemy,
     Entity,
     Player,
+    POWERUP_INFO,
     STAT_KEYS,
+    WEAPON_SPECS,
     allocate_enemy_stats,
     enemy_combat_stats,
     enemy_threat_label,
@@ -64,6 +67,7 @@ class Game:
         self.profile_loading_people: set[str] = set()
         self.failed_article_profiles: set[str] = set()
         self.enemies: list[Enemy] = []
+        self.dropped_items: list[DroppedItem] = []
         self.spawn_timer = 0.0
         self.failed_connection_lookups: dict[str, int] = {}
         self.connection_queue: dict[str, int] = {}
@@ -417,6 +421,7 @@ class Game:
             self.possible_enemies.discard(name)
             self.active_people.discard(name)
             self.player.gain_defeat_strength()
+            self.drop_enemy_loot(enemy)
             self.ensure_person(name)["defeated"] = True
 
             cached_connections = self.people_graph[name]["connections"]
@@ -443,8 +448,46 @@ class Game:
                     self.notice = f"Tree exhausted at {name} — starting a new tree"
             self.notice_time = 2.8
 
-            if name.casefold() in {"adolf hitler", "hitler"}:
+            if name.casefold() in {"adolf ", "hitler"}:
                 self.state = "won"
+
+    def drop_enemy_loot(self, enemy: Enemy) -> None:
+        """Turn each defeat into a useful, visible arena reward."""
+        weapon_chance = 0.18 + enemy.threat_level * 0.055
+        guaranteed_early_weapon = self.player.defeat_count == 1
+        if guaranteed_early_weapon or random.random() < weapon_chance:
+            weapon_names = ["club"]
+            if enemy.threat_level >= 1 or self.player.defeat_count >= 4:
+                weapon_names.append("sword")
+            if enemy.threat_level >= 3 or self.player.defeat_count >= 10:
+                weapon_names.append("hammer")
+            item = DroppedItem(
+                enemy.pos,
+                weapon_spec=WEAPON_SPECS[random.choice(weapon_names)],
+            )
+        else:
+            # Low health strongly biases the useful drop without making the
+            # other temporary combat boosts disappear from the loot table.
+            choices = ["health", "health", "fury", "haste"]
+            if self.player.health / self.player.max_health > 0.55:
+                choices.remove("health")
+            item = DroppedItem(enemy.pos, powerup=random.choice(choices))
+        item.pos += pygame.Vector2(random.uniform(-12, 12), random.uniform(-12, 12))
+        item.pos.x = Entity.clamp(item.pos.x, ARENA.left + 18, ARENA.right - 18)
+        item.pos.y = Entity.clamp(item.pos.y, ARENA.top + 18, ARENA.bottom - 18)
+        self.dropped_items.append(item)
+
+    def update_dropped_items(self, dt: float) -> None:
+        for item in self.dropped_items:
+            item.update(dt)
+            if self.player.alive and item.can_collect(self.player):
+                message = item.collect(self.player)
+                if message:
+                    self.notice = message
+                    self.notice_time = 2.2
+        self.dropped_items = [
+            item for item in self.dropped_items if not item.expired
+        ][-14:]
 
     def spawn_from_possible_people(self, dt: float) -> None:
         self.spawn_timer = max(0.0, self.spawn_timer - dt)
@@ -523,6 +566,7 @@ class Game:
         self.player.update(dt, pygame.key.get_pressed(), self.enemies)
         for enemy in self.enemies:
             enemy.update(dt, self.player)
+        self.update_dropped_items(dt)
         self.resolve_entity_collisions(frame_start_positions)
 
         self.player.attack(self.enemies)
@@ -679,6 +723,8 @@ class Game:
             point = (rng.randrange(ARENA.left, ARENA.right), rng.randrange(ARENA.top, ARENA.bottom))
             pygame.draw.circle(self.screen, (183, 198, 161), point, 2)
 
+        for item in self.dropped_items:
+            item.draw(self.screen, self.tiny_font)
         for enemy in self.enemies:
             enemy.draw(self.screen, self.small_font)
         self.player.draw(self.screen)
@@ -710,8 +756,28 @@ class Game:
             (229, 70, 153) if self.player.can_overcharge else (102, 171, 224),
             "K  OVERCHARGE" if self.player.can_overcharge else "K  RIGHT PUNCH",
         )
+        equipment_parts = []
+        for side in Entity.SIDES:
+            weapon = self.player.weapons[side]
+            if weapon is not None:
+                equipment_parts.append(
+                    f"{side[0].upper()}:{weapon.name} {weapon.durability}"
+                )
+        for kind, remaining in self.player.powerup_timers.items():
+            if remaining > 0:
+                equipment_parts.append(
+                    f"{POWERUP_INFO[kind][0].split()[0]} {remaining:.1f}s"
+                )
+        if equipment_parts:
+            equipment = self.small_font.render(
+                "   ".join(equipment_parts), True, INK
+            )
+            self.screen.blit(
+                equipment,
+                equipment.get_rect(midbottom=(PLAYFIELD_WIDTH / 2, HEIGHT - 34)),
+            )
         controls = self.small_font.render(
-            "W/S move   Shift lock   A/D turn/strafe   Q/E turn/dash   J/K punch   U/I kick",
+            "W/S move   Shift lock   A/D turn/strafe   Q/E turn/dash   J/K punch/weapon   U/I kick",
             True,
             INK,
         )

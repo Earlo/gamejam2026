@@ -68,6 +68,14 @@ Kicks plant the entity in place and sweep a foot through a wide arc. They deal l
 damage than a strong punch but cover the sides and knock targets along the sweep,
 making them useful against strafing opponents.
 
+Every defeated enemy drops an item that can be collected by walking over it.
+Clubs, swords, and hammers automatically equip into an empty hand (or replace the
+most worn weapon) and make that hand's J/K attack longer and stronger. Weapons
+lose one durability on each successful hit and break at zero. Health pickups heal
+35 HP, while Fury boosts damage and Haste boosts movement and attack speed for ten
+seconds. The first defeated enemy always drops a weapon; later loot is influenced
+by enemy threat. Uncollected drops blink before disappearing after 22 seconds.
+
 
 ## Run the prototype
 

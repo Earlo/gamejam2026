@@ -7,6 +7,8 @@ from collections.abc import Iterable
 
 import pygame
 
+from .items import Weapon, WeaponSpec
+
 
 class Entity:
     """A ball-bodied brawler with two hands, two feet, and shared combat rules."""
@@ -50,6 +52,8 @@ class Entity:
         self.backwards_speed = backwards_speed if backwards_speed is not None else speed
         self.turn_speed = turn_speed
         self.damage_scale = damage_scale
+        self.power_damage_multiplier = 1.0
+        self.movement_speed_multiplier = 1.0
         self.set_attack_speed(attack_speed_multiplier)
 
         self.angle = 0.0
@@ -58,6 +62,9 @@ class Entity:
         self.charge = {side: 0.0 for side in self.SIDES}
         self.punch_time = {side: 0.0 for side in self.SIDES}
         self.punch_hits = {side: set() for side in self.SIDES}
+        self.weapons: dict[str, Weapon | None] = {
+            side: None for side in self.SIDES
+        }
         self.kick_time = {side: 0.0 for side in self.SIDES}
         self.kick_cooldown = {side: 0.0 for side in self.SIDES}
         self.kick_hits = {side: set() for side in self.SIDES}
@@ -177,11 +184,18 @@ class Entity:
             movement = movement.normalize()
         forward_speed = self.speed if movement.y >= 0 else self.backwards_speed
         forward_speed *= self.movement_factor
-        self.pos += self.forward * movement.y * forward_speed * dt
+        self.pos += (
+            self.forward
+            * movement.y
+            * forward_speed
+            * self.movement_speed_multiplier
+            * dt
+        )
         self.pos += (
             self.forward.rotate(90)
             * movement.x
             * self.speed
+            * self.movement_speed_multiplier
             * self.movement_factor
             * dt
         )
@@ -350,6 +364,50 @@ class Entity:
         self.punch_time[side] = self.punch_duration
         self.punch_hits[side].clear()
 
+    def equip_weapon(self, spec: WeaponSpec, side: str | None = None) -> str:
+        """Equip a fresh weapon, preferring an empty or more worn hand."""
+        if side not in self.SIDES:
+            empty_side = next(
+                (
+                    candidate
+                    for candidate in self.SIDES
+                    if self.weapons[candidate] is None
+                ),
+                None,
+            )
+            if empty_side is not None:
+                side = empty_side
+            else:
+                def remaining_durability(candidate: str) -> int:
+                    weapon = self.weapons[candidate]
+                    assert weapon is not None
+                    return weapon.durability
+
+                side = min(self.SIDES, key=remaining_durability)
+        assert side is not None
+        self.weapons[side] = Weapon.from_spec(spec)
+        return side
+
+    @staticmethod
+    def point_segment_distance(
+        point: pygame.Vector2,
+        start: pygame.Vector2,
+        end: pygame.Vector2,
+    ) -> float:
+        segment = end - start
+        if segment.length_squared() == 0:
+            return point.distance_to(start)
+        progress = Entity.clamp(
+            (point - start).dot(segment) / segment.length_squared(), 0, 1
+        )
+        return point.distance_to(start + segment * progress)
+
+    def weapon_tip(self, side: str) -> pygame.Vector2:
+        weapon = self.weapons[side]
+        if weapon is None:
+            return self.hand_position(side)
+        return self.hand_position(side) + self.forward * weapon.spec.reach
+
     def start_kick(self, side: str) -> None:
         if (
             self.kick_time["left"] > 0
@@ -491,6 +549,7 @@ class Entity:
         for side in self.SIDES:
             if self.punch_time[side] > 0:
                 hand = self.hand_position(side)
+                weapon = self.weapons[side]
                 power_ratio = self.clamp(
                     self.charge[side] / self.max_charge_time, 0, 1
                 )
@@ -504,15 +563,44 @@ class Entity:
                     target_id = id(target)
                     if target_id in self.punch_hits[side]:
                         continue
-                    if hand.distance_to(target.pos) <= self.hand_radius + target.radius:
-                        damage = (10 + 22 * power_ratio) * self.damage_scale
+                    if weapon is None:
+                        hit = (
+                            hand.distance_to(target.pos)
+                            <= self.hand_radius + target.radius
+                        )
+                    else:
+                        hit = self.point_segment_distance(
+                            target.pos, hand, self.weapon_tip(side)
+                        ) <= weapon.spec.width + target.radius
+                    if hit:
+                        weapon_damage = (
+                            weapon.spec.damage_multiplier
+                            if weapon is not None
+                            else 1.0
+                        )
+                        weapon_knockback = (
+                            weapon.spec.knockback_multiplier
+                            if weapon is not None
+                            else 1.0
+                        )
+                        damage = (
+                            (10 + 22 * power_ratio)
+                            * self.damage_scale
+                            * self.power_damage_multiplier
+                            * weapon_damage
+                        )
                         knockback = (
                             170
                             + 270 * power_ratio
                             + 700 * overcharge_ratio**1.4
-                        ) * self.damage_scale
+                        ) * self.damage_scale * weapon_knockback
                         target.take_damage(damage, self.forward * knockback)
                         self.punch_hits[side].add(target_id)
+                        if weapon is not None:
+                            weapon.durability -= 1
+                            if weapon.durability <= 0:
+                                self.weapons[side] = None
+                                break
 
             if self.kick_time[side] > 0:
                 foot = self.foot_position(side)
@@ -522,7 +610,7 @@ class Entity:
                         continue
                     if foot.distance_to(target.pos) <= self.radius + 1 + target.radius:
                         target.take_damage(
-                            13 * self.damage_scale,
+                            13 * self.damage_scale * self.power_damage_multiplier,
                             self.kick_knockback_direction(side)
                             * 420
                             * self.damage_scale,
@@ -569,6 +657,37 @@ class Entity:
             round(overcharged * overcharge_ratio + normal * (1 - overcharge_ratio))
             for normal, overcharged in zip(normal_color, overcharge_color)
         )
+
+    def draw_weapon(self, surface: pygame.Surface, side: str) -> None:
+        weapon = self.weapons[side]
+        if weapon is None:
+            return
+        outline = (35, 38, 48)
+        spec = weapon.spec
+        hand = self.hand_position(side)
+        tip = self.weapon_tip(side)
+        right = self.forward.rotate(90)
+        pygame.draw.line(surface, outline, hand, tip, spec.width + 4)
+        pygame.draw.line(surface, spec.color, hand, tip, spec.width)
+        if spec.name == "SWORD":
+            guard = hand + self.forward * 3
+            pygame.draw.line(
+                surface, outline, guard - right * 7, guard + right * 7, 5
+            )
+            pygame.draw.line(
+                surface, spec.accent, guard - right * 6, guard + right * 6, 3
+            )
+            pygame.draw.polygon(
+                surface,
+                spec.color,
+                [tip + self.forward * 6, tip - right * 3, tip + right * 3],
+            )
+        elif spec.name == "HAMMER":
+            pygame.draw.line(surface, outline, tip - right * 9, tip + right * 9, 12)
+            pygame.draw.line(surface, spec.accent, tip - right * 8, tip + right * 8, 8)
+        else:
+            pygame.draw.circle(surface, outline, tip, spec.width + 2)
+            pygame.draw.circle(surface, spec.accent, tip, spec.width)
 
     def draw(
         self,
@@ -632,6 +751,7 @@ class Entity:
             hand = self.hand_position(side)
             pygame.draw.circle(surface, outline, hand, self.hand_radius + 2)
             pygame.draw.circle(surface, self.fist_color(side), hand, self.hand_radius)
+            self.draw_weapon(surface, side)
 
         if show_status and font is not None and self.alive:
             bar = pygame.Rect(0, 0, self.radius * 2, 6)

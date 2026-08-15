@@ -25,6 +25,8 @@ class Player(Entity):
         self.locked_on = False
         self.target_indicator_angle = 0.0
         self.defeat_count = 0
+        self.base_attack_speed_multiplier = 1.0
+        self.powerup_timers = {"fury": 0.0, "haste": 0.0}
 
     def apply_defeat_progress(self, defeat_count: int, *, heal_growth: bool = False) -> None:
         """Scale player attributes from persistent defeats with diminishing caps."""
@@ -36,7 +38,8 @@ class Player(Entity):
         self.backwards_speed = 135 + min(55, defeat_count)
         self.turn_speed = 190 + min(70, defeat_count * 1.2)
         self.damage_scale = 1.0 + min(1.5, defeat_count * 0.025)
-        self.set_attack_speed(1.0 + min(1.0, defeat_count * 0.02))
+        self.base_attack_speed_multiplier = 1.0 + min(1.0, defeat_count * 0.02)
+        self.refresh_powerup_stats()
         self.dash_speed = max(480.0, self.speed * 2.75)
         self.fast_turn_speed = max(570.0, self.turn_speed * 3.2)
         if heal_growth:
@@ -48,6 +51,38 @@ class Player(Entity):
 
     def gain_defeat_strength(self) -> None:
         self.apply_defeat_progress(self.defeat_count + 1, heal_growth=True)
+
+    def refresh_powerup_stats(self) -> None:
+        """Combine temporary pickup effects with persistent defeat growth."""
+        fury_active = self.powerup_timers.get("fury", 0.0) > 0
+        haste_active = self.powerup_timers.get("haste", 0.0) > 0
+        self.power_damage_multiplier = 1.5 if fury_active else 1.0
+        self.movement_speed_multiplier = 1.32 if haste_active else 1.0
+        self.set_attack_speed(
+            self.base_attack_speed_multiplier * (1.35 if haste_active else 1.0)
+        )
+
+    def apply_powerup(self, kind: str) -> None:
+        """Apply an instant heal or refresh a ten-second combat buff."""
+        if kind == "health":
+            self.health = min(self.max_health, self.health + 35)
+        elif kind in self.powerup_timers:
+            self.powerup_timers[kind] = max(self.powerup_timers[kind], 10.0)
+            self.refresh_powerup_stats()
+        else:
+            raise ValueError(f"unknown powerup: {kind}")
+
+    def update_powerups(self, dt: float) -> None:
+        previous_active = {
+            kind: remaining > 0 for kind, remaining in self.powerup_timers.items()
+        }
+        for kind in self.powerup_timers:
+            self.powerup_timers[kind] = max(0.0, self.powerup_timers[kind] - dt)
+        if any(
+            previous_active[kind] != (remaining > 0)
+            for kind, remaining in self.powerup_timers.items()
+        ):
+            self.refresh_powerup_stats()
 
     def closest_target(self, targets: list[Entity]) -> Entity | None:
         living_targets = [target for target in targets if target.alive]
@@ -90,6 +125,7 @@ class Player(Entity):
         keys: pygame.key.ScancodeWrapper,
         targets: list[Entity],
     ) -> None:
+        self.update_powerups(dt)
         if self.locked_on and (
             self.target is None or not self.target.alive or self.target not in targets
         ):
