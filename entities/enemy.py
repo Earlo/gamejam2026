@@ -125,8 +125,19 @@ class Enemy(Entity):
             self.strafe_timer = (1.15 if self.boss else 1.55) * self.cooldown_factor
 
         distance = self.pos.distance_to(target.pos)
-        preferred_distance = self.radius + target.radius + max(
-            15, 31 - self.aggression * 1.7
+        armed_sides = [
+            side for side in self.SIDES if self.weapons[side] is not None
+        ]
+        has_gun = any(
+            self.weapons[side].spec.attack_style == "shoot"
+            for side in armed_sides
+        )
+        preferred_distance = (
+            185
+            if has_gun
+            else self.radius
+            + target.radius
+            + max(15, 31 - self.aggression * 1.7)
         )
         forward_amount = 0.0
         if distance > preferred_distance + 8:
@@ -134,7 +145,11 @@ class Enemy(Entity):
         elif distance < preferred_distance - 8:
             forward_amount = -0.45
 
-        attack_distance = self.radius + target.radius + 50 + self.aggression * 2
+        attack_distance = (
+            285
+            if has_gun
+            else self.radius + target.radius + 50 + self.aggression * 2
+        )
         strafe_amount = (
             0.72 * self.strafe_direction
             if distance < attack_distance + 45
@@ -155,8 +170,11 @@ class Enemy(Entity):
         if distance > attack_distance or self.action_cooldown > 0:
             return
 
-        side = self.next_side
-        self.next_side = "right" if side == "left" else "left"
+        if armed_sides:
+            side = armed_sides[self.action_count % len(armed_sides)]
+        else:
+            side = self.next_side
+            self.next_side = "right" if side == "left" else "left"
         self.action_count += 1
 
         dash_interval = max(2, 7 - min(5, self.aggression // 2))

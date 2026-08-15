@@ -407,6 +407,7 @@ class Game:
             article_length=int(person["article_length"]),
             boss=is_boss,
         )
+        self.maybe_arm_enemy(enemy)
         self.enemies.append(enemy)
         self.active_people.add(name)
         if not person["connections_loaded"]:
@@ -452,22 +453,22 @@ class Game:
                 self.state = "won"
 
     def drop_enemy_loot(self, enemy: Enemy) -> None:
-        """Turn each defeat into a useful, visible arena reward."""
-        weapon_chance = 0.18 + enemy.threat_level * 0.055
-        guaranteed_early_weapon = self.player.defeat_count == 1
-        if guaranteed_early_weapon or random.random() < weapon_chance:
-            weapon_names = ["club"]
-            if enemy.threat_level >= 1 or self.player.defeat_count >= 4:
-                weapon_names.append("sword")
-            if enemy.threat_level >= 3 or self.player.defeat_count >= 10:
-                weapon_names.append("hammer")
+        """Drop a carried weapon or occasionally roll a powerup."""
+        carried_weapons = [
+            weapon for weapon in enemy.weapons.values() if weapon is not None
+        ]
+        if carried_weapons:
+            weapon = carried_weapons[0]
             item = DroppedItem(
                 enemy.pos,
-                weapon_spec=WEAPON_SPECS[random.choice(weapon_names)],
+                weapon_spec=weapon.spec,
+                weapon_durability=weapon.durability,
             )
         else:
-            # Low health strongly biases the useful drop without making the
-            # other temporary combat boosts disappear from the loot table.
+            powerup_chance = 0.18 + enemy.threat_level * 0.035
+            if random.random() >= powerup_chance:
+                return
+            # Low health biases the useful drop without crowding out buffs.
             choices = ["health", "health", "fury", "haste"]
             if self.player.health / self.player.max_health > 0.55:
                 choices.remove("health")
@@ -476,6 +477,22 @@ class Game:
         item.pos.x = Entity.clamp(item.pos.x, ARENA.left + 18, ARENA.right - 18)
         item.pos.y = Entity.clamp(item.pos.y, ARENA.top + 18, ARENA.bottom - 18)
         self.dropped_items.append(item)
+
+    def maybe_arm_enemy(self, enemy: Enemy) -> None:
+        """Give some enemies the same weapon they may later drop."""
+        first_new_game_enemy = self.player.defeat_count == 0 and not self.enemies
+        weapon_chance = 0.14 + enemy.threat_level * 0.045
+        if not first_new_game_enemy and random.random() >= weapon_chance:
+            return
+        weapon_names = ["club"]
+        if enemy.threat_level >= 1 or self.player.defeat_count >= 4:
+            weapon_names.append("sword")
+        if enemy.threat_level >= 2 or self.player.defeat_count >= 8:
+            weapon_names.append("gun")
+        side = "left" if enemy.appearance_id[1] % 2 else "right"
+        enemy.equip_weapon(
+            WEAPON_SPECS[random.choice(weapon_names)], side
+        )
 
     def update_dropped_items(self, dt: float) -> None:
         for item in self.dropped_items:

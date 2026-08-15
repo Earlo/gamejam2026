@@ -20,9 +20,11 @@ class WeaponSpec:
     """The immutable combat and drawing values shared by a weapon type."""
 
     name: str
+    attack_style: str
     color: tuple[int, int, int]
     accent: tuple[int, int, int]
     reach: int
+    attack_range: int
     width: int
     damage_multiplier: float
     knockback_multiplier: float
@@ -47,13 +49,13 @@ class Weapon:
 
 WEAPON_SPECS = {
     "club": WeaponSpec(
-        "CLUB", (139, 91, 55), (205, 151, 85), 22, 6, 1.35, 1.55, 10
+        "CLUB", "swing", (139, 91, 55), (205, 151, 85), 29, 29, 7, 1.35, 1.55, 10
     ),
     "sword": WeaponSpec(
-        "SWORD", (190, 204, 211), (94, 135, 165), 31, 4, 1.65, 1.18, 8
+        "SWORD", "stab", (190, 204, 211), (94, 135, 165), 34, 34, 4, 1.65, 1.18, 8
     ),
-    "hammer": WeaponSpec(
-        "HAMMER", (84, 91, 103), (221, 156, 62), 25, 9, 1.85, 1.85, 6
+    "gun": WeaponSpec(
+        "GUN", "shoot", (72, 79, 91), (221, 156, 62), 21, 300, 4, 1.15, 0.62, 12
     ),
 }
 
@@ -76,6 +78,7 @@ class DroppedItem:
         *,
         powerup: str | None = None,
         weapon_spec: WeaponSpec | None = None,
+        weapon_durability: int | None = None,
     ) -> None:
         if (powerup is None) == (weapon_spec is None):
             raise ValueError("a dropped item must contain one powerup or weapon")
@@ -84,6 +87,7 @@ class DroppedItem:
         self.pos = pygame.Vector2(pos)
         self.powerup = powerup
         self.weapon_spec = weapon_spec
+        self.weapon_durability = weapon_durability
         self.age = 0.0
         self.collected = False
         self.bob_phase = (self.pos.x * 0.07 + self.pos.y * 0.11) % math.tau
@@ -111,7 +115,9 @@ class DroppedItem:
             return ""
         self.collected = True
         if self.weapon_spec is not None:
-            side = player.equip_weapon(self.weapon_spec)
+            side = player.equip_weapon(
+                self.weapon_spec, durability=self.weapon_durability
+            )
             return f"Picked up {self.weapon_spec.name} ({side} hand)"
         assert self.powerup is not None
         player.apply_powerup(self.powerup)
@@ -188,10 +194,13 @@ def draw_weapon_icon(
     end = center + along * 9
     pygame.draw.line(surface, INK, start, end, max(4, spec.width))
     pygame.draw.line(surface, spec.color, start, end, max(2, spec.width - 3))
-    if spec.name == "HAMMER":
+    if spec.name == "GUN":
         across = along.rotate(90)
-        pygame.draw.line(surface, INK, end - across * 7, end + across * 7, 9)
-        pygame.draw.line(surface, spec.accent, end - across * 6, end + across * 6, 6)
+        pygame.draw.line(surface, INK, start, end + along * 2, 8)
+        pygame.draw.line(surface, spec.color, start, end + along * 2, 5)
+        grip = center - along * 2 + across * 5
+        pygame.draw.line(surface, INK, center - along * 2, grip, 6)
+        pygame.draw.line(surface, spec.accent, center - along * 2, grip, 3)
     elif spec.name == "SWORD":
         across = along.rotate(90)
         pygame.draw.line(
