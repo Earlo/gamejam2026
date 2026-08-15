@@ -20,9 +20,14 @@ not currently fighting.
 Wikipedia article byte length determines each enemy's total stat-point budget.
 Those points are distributed deterministically but unevenly between health,
 speed, damage, turning, aggression, and attack speed, so people with similarly
-long articles can still fight very differently. Enemy scaling is deliberately
-steep, and attack speed reduces both action animations and cooldowns. The sidebar
-previews every allocation and marks each person's children CHARTED or SEARCHING.
+long articles can still fight very differently. Every enemy also gets a stable,
+name-derived palette and body marking, while its strongest stat adds a matching
+armor, fist, movement, horn, or attack-speed detail. Higher total-point threat
+tiers become larger and gain increasingly angry brows, teeth, spikes, and horns.
+Those tiers also add real health, damage, speed, turning, aggression, and attack
+speed bonuses; bosses receive an additional guaranteed combat boost. The sidebar
+previews every allocation and threat rank and marks each person's children
+CHARTED or SEARCHING.
 The player gains health, movement, turning, damage, and attack speed with each
 defeat.
 Only one opponent can be active initially. Every five defeats adds another
